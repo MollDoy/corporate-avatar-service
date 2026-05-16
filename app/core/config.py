@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     max_image_mb: int = 10
 
     u2net_home: str = "/app/models/rembg"
-    rembg_model_name: str = "u2net"
+    rembg_model_name: str = "birefnet-portrait"
     avatar_output_size: int = 512
     mask_feather_radius: float = 0.8
 

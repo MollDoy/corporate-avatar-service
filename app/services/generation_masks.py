@@ -3,7 +3,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
-from app.services.face_detection import FaceBox, validate_single_face
+from app.services.face_detection import FaceBox, detect_faces
 from app.services.image_storage import save_job_image
 
 
@@ -141,7 +141,14 @@ def create_generation_masks(
     person_mask = _load_grayscale_mask(person_mask_path)
     person_mask = _binarize_mask(person_mask)
 
-    detection = validate_single_face(result_image_path)
+    detection = detect_faces(result_image_path)
+
+    if detection.face_count == 0:
+        raise ValueError(
+            "No face detected on processed avatar image. "
+            "Could not create generation masks."
+        )
+
     face = detection.faces[0]
 
     face_protection_mask = _create_face_protection_mask(
