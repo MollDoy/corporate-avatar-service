@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.routes_avatar_jobs import router as avatar_jobs_router
+from app.api.routes_styles import router as styles_router
 from app.core.config import settings
 from app.db import models  # noqa: F401
 from app.db.base import Base
@@ -25,3 +26,4 @@ def health_check() -> dict:
 
 
 app.include_router(avatar_jobs_router)
+app.include_router(styles_router)

@@ -31,9 +31,16 @@ app/storage/*
 *.log
 
 # Models and generated files
-models/
-outputs/
+models/*
+outputs/*
 *.ckpt
 *.safetensors
 *.pt
 *.pth
+
+# Local reference images
+references/*
+!references/.gitkeep
+
+# Windows / WSL metadata
+*Zone.Identifier

@@ -5,6 +5,7 @@ from typing import Any
 from PIL import Image, ImageFilter
 
 from app.core.config import settings
+from app.services.avatar_styles import get_avatar_style
 from app.services.image_storage import save_result_image
 
 
@@ -37,14 +38,12 @@ def _get_rembg_session() -> Any:
     return _sessions[model_name]
 
 
-def _create_gradient_background(width: int, height: int) -> Image.Image:
-    """
-    Creates a simple corporate light gradient background.
-    Later we can replace colors with brand colors from DB or .env.
-    """
-    top_color = (245, 248, 255)
-    bottom_color = (218, 229, 245)
-
+def _create_gradient_background(
+    width: int,
+    height: int,
+    top_color: tuple[int, int, int],
+    bottom_color: tuple[int, int, int],
+) -> Image.Image:
     background = Image.new("RGB", (width, height), top_color)
     pixels = background.load()
 
@@ -61,26 +60,122 @@ def _create_gradient_background(width: int, height: int) -> Image.Image:
     return background
 
 
-def _resize_foreground(foreground: Image.Image, output_size: int) -> Image.Image:
+def _feather_alpha(foreground: Image.Image) -> Image.Image:
     """
-    Keeps the whole person visible and scales the foreground into the target canvas.
+    Slightly smooths alpha edges after background removal.
+    This does not fix bad masks completely, but reduces harsh blocky borders.
     """
-    result = foreground.copy()
-    result.thumbnail((output_size, output_size), Image.Resampling.LANCZOS)
-    return result
+    if foreground.mode != "RGBA":
+        foreground = foreground.convert("RGBA")
+
+    red, green, blue, alpha = foreground.split()
+
+    radius = max(0.0, settings.mask_feather_radius)
+
+    if radius > 0:
+        alpha = alpha.filter(ImageFilter.GaussianBlur(radius=radius))
+
+    return Image.merge("RGBA", (red, green, blue, alpha))
 
 
-def generate_basic_corporate_avatar(job_id: str, source_image_path: str) -> str:
+def _trim_transparent_edges(
+    foreground: Image.Image,
+    padding_ratio: float = 0.04,
+) -> Image.Image:
     """
-    Step 4 MVP:
-    - takes source image
+    Trims transparent area around the segmented person.
+
+    Important:
+    We add padding so that hair/head edges are not cut too tightly.
+    """
+    if foreground.mode != "RGBA":
+        foreground = foreground.convert("RGBA")
+
+    alpha = foreground.getchannel("A")
+    bbox = alpha.getbbox()
+
+    if bbox is None:
+        return foreground
+
+    width, height = foreground.size
+    left, top, right, bottom = bbox
+
+    padding = int(max(width, height) * padding_ratio)
+
+    left = max(0, left - padding)
+    top = max(0, top - padding)
+    right = min(width, right + padding)
+    bottom = min(height, bottom + padding)
+
+    return foreground.crop((left, top, right, bottom))
+
+
+def _fit_foreground_to_avatar_canvas(
+    foreground: Image.Image,
+    output_size: int,
+) -> Image.Image:
+    """
+    Fits the full segmented person into a square avatar canvas.
+
+    Unlike center-crop, this function does not cut the head.
+    It scales the person to fit inside the canvas with margins.
+    """
+    if foreground.mode != "RGBA":
+        foreground = foreground.convert("RGBA")
+
+    horizontal_margin = int(output_size * 0.05)
+    top_margin = int(output_size * 0.04)
+    bottom_margin = int(output_size * 0.00)
+
+    max_width = output_size - 2 * horizontal_margin
+    max_height = output_size - top_margin - bottom_margin
+
+    width, height = foreground.size
+
+    if width <= 0 or height <= 0:
+        raise ValueError("Foreground image has invalid size")
+
+    scale = min(max_width / width, max_height / height)
+
+    new_width = max(1, int(width * scale))
+    new_height = max(1, int(height * scale))
+
+    resized = foreground.resize(
+        (new_width, new_height),
+        Image.Resampling.LANCZOS,
+    )
+
+    canvas = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 0))
+
+    x = (output_size - new_width) // 2
+    y = output_size - bottom_margin - new_height
+
+    if y < top_margin:
+        y = top_margin
+
+    canvas.alpha_composite(resized, dest=(x, y))
+
+    return canvas
+
+
+def generate_basic_corporate_avatar(
+    job_id: str,
+    source_image_path: str,
+    style_id: str = "default_business",
+) -> str:
+    """
+    Current MVP:
+    - takes source image without unsafe square crop
     - removes background
-    - places person on a clean corporate gradient
+    - trims transparent edges with padding
+    - fits the full person into 512x512 avatar canvas
+    - places person on selected corporate gradient
     - saves result.png
     """
     from rembg import remove
 
     output_size = settings.avatar_output_size
+    style = get_avatar_style(style_id)
 
     source = Image.open(source_image_path).convert("RGB")
 
@@ -92,18 +187,24 @@ def generate_basic_corporate_avatar(job_id: str, source_image_path: str) -> str:
         alpha_matting=True,
         alpha_matting_foreground_threshold=240,
         alpha_matting_background_threshold=10,
-        alpha_matting_erode_size=10,
+        alpha_matting_erode_size=3,
     ).convert("RGBA")
 
-    foreground = _resize_foreground(foreground, output_size)
+    foreground = _feather_alpha(foreground)
+    foreground = _trim_transparent_edges(foreground)
+    foreground_canvas = _fit_foreground_to_avatar_canvas(
+        foreground=foreground,
+        output_size=output_size,
+    )
 
-    background = _create_gradient_background(output_size, output_size).convert("RGBA")
-    background = background.filter(ImageFilter.GaussianBlur(radius=0.3))
+    background = _create_gradient_background(
+        width=output_size,
+        height=output_size,
+        top_color=style.top_color,
+        bottom_color=style.bottom_color,
+    ).convert("RGBA")
 
-    x = (output_size - foreground.width) // 2
-    y = output_size - foreground.height
-
-    background.alpha_composite(foreground, dest=(x, y))
+    background.alpha_composite(foreground_canvas)
 
     result = background.convert("RGB")
 

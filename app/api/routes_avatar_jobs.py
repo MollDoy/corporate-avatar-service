@@ -64,6 +64,7 @@ def _process_job(job: AvatarJob, db: Session) -> None:
         result_image_path = generate_basic_corporate_avatar(
             job_id=job.id,
             source_image_path=job.source_image_path,
+            style_id=job.style_id,
         )
 
         similarity_result = calculate_face_similarity(

@@ -46,3 +46,8 @@ class AvatarJobResultResponse(BaseModel):
     job_id: str
     image_base64: str
     mime_type: str = "image/png"
+
+class AvatarStyleResponse(BaseModel):
+    style_id: str
+    title: str
+    description: str
