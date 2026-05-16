@@ -7,6 +7,7 @@ StyleId = Literal[
     "blue_business",
     "warm_office",
     "gray_minimal",
+    "ai_business",
 ]
 
 
@@ -47,6 +48,13 @@ AVATAR_STYLES: dict[str, AvatarStyle] = {
         description="Neutral minimal gray background",
         top_color=(248, 248, 248),
         bottom_color=(220, 224, 229),
+    ),
+    "ai_business": AvatarStyle(
+        style_id="ai_business",
+        title="AI Business",
+        description="Experimental Stable Diffusion inpainting mode for background and clothes",
+        top_color=(245, 248, 255),
+        bottom_color=(218, 229, 245),
     ),
 }
 

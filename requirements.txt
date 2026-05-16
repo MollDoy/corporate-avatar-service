@@ -9,3 +9,4 @@ Pillow==12.2.0
 python-dotenv==1.0.1
 rembg[cpu]==2.0.75
 opencv-python-headless==4.13.0.92
+httpx==0.28.1

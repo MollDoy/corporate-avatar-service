@@ -17,6 +17,7 @@ from app.services.background_replacement import generate_basic_corporate_avatar
 from app.services.face_detection import validate_single_face
 from app.services.face_similarity import calculate_face_similarity
 from app.services.generation_masks import create_generation_masks
+from app.services.ai_inpainting_client import run_ai_inpainting
 from app.services.image_storage import (
     decode_image_from_base64,
     encode_file_to_base64,
@@ -78,12 +79,39 @@ def _process_job(job: AvatarJob, db: Session) -> None:
             person_mask_path=person_mask_path,
         )
 
+        final_result_image_path = result_image_path
+
+        if job.style_id == "ai_business":
+            job_dir = str(Path(result_image_path).parent)
+
+            final_result_image_path = run_ai_inpainting(
+                job_dir=job_dir,
+                input_name="result.png",
+                mask_name="clothes_mask.png",
+                output_name=settings.ai_output_name,
+                prompt=(
+                    "professional corporate ID portrait, formal business headshot, "
+                    "wearing a light blue dress shirt with a dark tie, clean collar, "
+                    "neat office clothing, realistic corporate portrait, studio lighting, "
+                    "high quality, sharp details, natural hands"
+                ),
+                negative_prompt=(
+                    "changed face, distorted face, changed eyes, distorted eyes, deformed mouth, "
+                    "bad anatomy, extra fingers, missing fingers, fused fingers, broken hands, "
+                    "extra limbs, low quality, blurry, artifacts, cartoon, "
+                    "t-shirt, casual shirt, hoodie, sweater, sportswear, watch, jewelry"
+                ),
+                steps=16,
+                guidance_scale=8.0,
+                strength=0.85,
+            )
+
         similarity_result = calculate_face_similarity(
             source_image_path=job.source_image_path,
-            result_image_path=result_image_path,
+            result_image_path=final_result_image_path,
         )
 
-        job.result_image_path = result_image_path
+        job.result_image_path = final_result_image_path
         job.face_similarity_score = similarity_result.score
 
         if similarity_result.score < settings.face_similarity_threshold:

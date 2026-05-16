@@ -28,22 +28,28 @@ def _load_grayscale_mask(mask_path: str) -> Image.Image:
 def _binarize_mask(mask: Image.Image, threshold: int = 16) -> Image.Image:
     return mask.point(lambda value: 255 if value > threshold else 0).convert("L")
 
+def _mask_bbox(mask: Image.Image) -> tuple[int, int, int, int] | None:
+    bbox = mask.getbbox()
+    if bbox is None:
+        return None
+    return bbox
 
 def _create_face_protection_mask(
     size: tuple[int, int],
     face: FaceBox,
 ) -> Image.Image:
     """
-    White = protected area.
+    White = protected identity area.
 
-    We protect not only the strict face rectangle, but also extra head/hair area.
-    This is important before diffusion inpainting: the generator must not redraw identity.
+    This mask protects face/head/hair, but should not cover the collar,
+    shoulders and upper clothes. Otherwise inpainting cannot create
+    a business shirt or suit jacket.
     """
     width, height = size
 
-    expansion_x = int(face.width * 0.65)
-    expansion_top = int(face.height * 0.85)
-    expansion_bottom = int(face.height * 0.65)
+    expansion_x = int(face.width * 0.55)
+    expansion_top = int(face.height * 0.80)
+    expansion_bottom = int(face.height * 0.25)
 
     left = max(0, face.x - expansion_x)
     top = max(0, face.y - expansion_top)
@@ -55,8 +61,7 @@ def _create_face_protection_mask(
 
     draw.ellipse((left, top, right, bottom), fill=255)
 
-    # Slight blur makes future inpainting transition softer.
-    return mask.filter(ImageFilter.GaussianBlur(radius=3))
+    return mask.filter(ImageFilter.GaussianBlur(radius=2))
 
 
 def _create_clothes_mask(
@@ -65,26 +70,29 @@ def _create_clothes_mask(
     face_protection_mask: Image.Image,
 ) -> Image.Image:
     """
-    White = likely clothes/body area.
+    White = area for business clothing inpainting.
 
-    We take the person mask and keep mostly the lower part of the portrait,
-    excluding protected face/head area.
+    The mask includes upper body, shoulders and torso,
+    but removes protected face/head area.
     """
     width, height = person_mask.size
 
-    y_start = int(face.y + face.height * 0.85)
+    y_start = int(face.y + face.height * 0.45)
     y_start = max(0, min(height, y_start))
 
-    lower_body_mask = Image.new("L", (width, height), 0)
-    draw = ImageDraw.Draw(lower_body_mask)
+    upper_body_mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(upper_body_mask)
     draw.rectangle((0, y_start, width, height), fill=255)
 
-    clothes_mask = ImageChops.multiply(person_mask, lower_body_mask)
+    clothes_mask = ImageChops.multiply(person_mask, upper_body_mask)
 
     inverted_face_protection = ImageChops.invert(face_protection_mask)
     clothes_mask = ImageChops.multiply(clothes_mask, inverted_face_protection)
 
-    return _binarize_mask(clothes_mask, threshold=32)
+    clothes_mask = clothes_mask.filter(ImageFilter.MaxFilter(size=7))
+    clothes_mask = clothes_mask.filter(ImageFilter.GaussianBlur(radius=1.2))
+
+    return _binarize_mask(clothes_mask, threshold=24)
 
 
 def create_generation_masks(

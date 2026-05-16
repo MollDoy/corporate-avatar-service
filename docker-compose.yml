@@ -12,6 +12,24 @@ services:
     depends_on:
       - db
 
+  ai_inpaint:
+    build:
+      context: .
+      dockerfile: Dockerfile.ai
+    container_name: avatar_ai_inpaint
+    env_file:
+      - .env
+    environment:
+      HF_HOME: /models/huggingface
+      HUGGINGFACE_HUB_CACHE: /models/huggingface/hub
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    volumes:
+      - ./app/storage:/app/storage
+      - ./models/huggingface:/models/huggingface
+    gpus: all
+    profiles:
+      - ai
+
   db:
     image: postgres:16
     container_name: avatar_db

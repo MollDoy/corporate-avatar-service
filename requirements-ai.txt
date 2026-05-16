@@ -8,3 +8,6 @@ accelerate==1.13.0
 safetensors>=0.8.0rc0
 Pillow==12.2.0
 numpy<3.0.0
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4

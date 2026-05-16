@@ -23,6 +23,18 @@ class Settings(BaseSettings):
     face_similarity_threshold: float = 0.45
     face_similarity_crop_size: int = 160
 
+    ai_model_id: str = "Lykon/dreamshaper-8-inpainting"
+    ai_service_url: str = "http://ai_inpaint:8010"
+    ai_device: str = "cuda"
+    ai_dtype: str = "float32"
+    ai_low_vram: bool = True
+    ai_output_name: str = "ai_result.png"
+    ai_inpaint_timeout_seconds: int = 900
+    ai_default_steps: int = 16
+    ai_default_guidance_scale: float = 8.0
+    ai_default_strength: float = 0.85
+    ai_restore_face_after_inpaint: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

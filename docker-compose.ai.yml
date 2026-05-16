@@ -9,10 +9,10 @@ services:
     environment:
       HF_HOME: /models/huggingface
       HUGGINGFACE_HUB_CACHE: /models/huggingface/hub
-      TRANSFORMERS_CACHE: /models/huggingface/transformers
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     volumes:
       - ./app/storage:/app/storage
       - ./models/huggingface:/models/huggingface
-      - ./scripts:/workspace/scripts
+    ports:
+      - "8010:8010"
     gpus: all

@@ -19,4 +19,4 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY scripts ./scripts
 
-ENTRYPOINT ["python", "/workspace/scripts/run_inpainting_experiment.py"]
+CMD ["uvicorn", "scripts.ai_service:app", "--host", "0.0.0.0", "--port", "8010"]

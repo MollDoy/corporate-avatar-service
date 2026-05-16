@@ -8,13 +8,17 @@ from PIL import Image
 
 
 DEFAULT_PROMPT = (
-    "professional corporate portrait, business suit, clean corporate background, "
-    "studio lighting, realistic photo, high quality, sharp details"
+    "professional corporate headshot, formal business portrait, "
+    "person wearing a dark navy business suit jacket and white collared dress shirt, "
+    "conservative office clothing, clean corporate style, studio lighting, "
+    "realistic photo, high quality, sharp details"
 )
 
 DEFAULT_NEGATIVE_PROMPT = (
-    "changed face, distorted face, bad eyes, deformed eyes, deformed mouth, "
-    "bad anatomy, extra limbs, low quality, blurry, artifacts, cartoon"
+    "changed face, distorted face, changed eyes, distorted eyes, deformed mouth, "
+    "bad anatomy, extra limbs, low quality, blurry, artifacts, cartoon, "
+    "t-shirt, casual shirt, sportswear, hoodie, fantasy armor, medieval costume, "
+    "robe, dress, exposed shoulders, cleavage, bare chest, muscular arms, bodybuilder"
 )
 
 
@@ -38,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mask-name",
         type=str,
-        default="ai_inpaint_mask.png",
+        default="clothes_mask.png",
         help="Mask filename inside job-dir. White pixels are repainted.",
     )
     parser.add_argument(
@@ -69,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--steps",
         type=int,
-        default=20,
+        default=12,
     )
     parser.add_argument(
         "--guidance-scale",
