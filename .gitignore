@@ -32,7 +32,10 @@ app/storage/*
 
 # Models and generated files
 models/*
+!models/.gitkeep
 outputs/*
+*.log
+*.onnx
 *.ckpt
 *.safetensors
 *.pt
