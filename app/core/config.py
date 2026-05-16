@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     rembg_model_name: str = "u2netp"
     avatar_output_size: int = 512
 
+    face_min_size_ratio: float = 0.12
+    face_detection_scale_factor: float = 1.1
+    face_detection_min_neighbors: int = 5
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

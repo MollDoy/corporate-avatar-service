@@ -11,6 +11,7 @@ from app.schemas.avatar import (
     AvatarJobStatusResponse,
 )
 from app.services.background_replacement import generate_basic_corporate_avatar
+from app.services.face_detection import validate_single_face
 from app.services.image_storage import (
     decode_image_from_base64,
     encode_file_to_base64,
@@ -53,6 +54,8 @@ def _process_job(job: AvatarJob, db: Session) -> None:
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        validate_single_face(job.source_image_path)
 
         result_image_path = generate_basic_corporate_avatar(
             job_id=job.id,
