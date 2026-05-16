@@ -57,22 +57,23 @@ def decode_image_from_base64(image_base64: str) -> Image.Image:
     return image.convert("RGB")
 
 
-def save_source_image(job_id: str, image: Image.Image) -> str:
-    job_dir = get_job_dir(job_id)
+def save_job_image(job_id: str, image: Image.Image, filename: str) -> str:
+    if not filename.lower().endswith(".png"):
+        raise ValueError("Only PNG job images are supported")
 
-    image_path = job_dir / "source.png"
+    job_dir = get_job_dir(job_id)
+    image_path = job_dir / filename
     image.save(image_path, format="PNG")
 
     return str(image_path)
+
+
+def save_source_image(job_id: str, image: Image.Image) -> str:
+    return save_job_image(job_id, image.convert("RGB"), "source.png")
 
 
 def save_result_image(job_id: str, image: Image.Image) -> str:
-    job_dir = get_job_dir(job_id)
-
-    image_path = job_dir / "result.png"
-    image.save(image_path, format="PNG")
-
-    return str(image_path)
+    return save_job_image(job_id, image.convert("RGB"), "result.png")
 
 
 def encode_file_to_base64(file_path: str) -> str:

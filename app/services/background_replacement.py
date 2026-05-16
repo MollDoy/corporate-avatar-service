@@ -6,7 +6,7 @@ from PIL import Image, ImageFilter
 
 from app.core.config import settings
 from app.services.avatar_styles import get_avatar_style
-from app.services.image_storage import save_result_image
+from app.services.image_storage import save_job_image, save_result_image
 
 
 _sessions: dict[str, Any] = {}
@@ -196,6 +196,9 @@ def generate_basic_corporate_avatar(
         foreground=foreground,
         output_size=output_size,
     )
+
+    person_mask = foreground_canvas.getchannel("A")
+    save_job_image(job_id, person_mask, "person_mask.png")
 
     background = _create_gradient_background(
         width=output_size,

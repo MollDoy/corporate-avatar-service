@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -14,6 +16,7 @@ from app.schemas.avatar import (
 from app.services.background_replacement import generate_basic_corporate_avatar
 from app.services.face_detection import validate_single_face
 from app.services.face_similarity import calculate_face_similarity
+from app.services.generation_masks import create_generation_masks
 from app.services.image_storage import (
     decode_image_from_base64,
     encode_file_to_base64,
@@ -67,6 +70,14 @@ def _process_job(job: AvatarJob, db: Session) -> None:
             style_id=job.style_id,
         )
 
+        person_mask_path = str(Path(result_image_path).parent / "person_mask.png")
+
+        create_generation_masks(
+            job_id=job.id,
+            result_image_path=result_image_path,
+            person_mask_path=person_mask_path,
+        )
+
         similarity_result = calculate_face_similarity(
             source_image_path=job.source_image_path,
             result_image_path=result_image_path,
@@ -97,7 +108,6 @@ def _process_job(job: AvatarJob, db: Session) -> None:
         db.add(job)
         db.commit()
         db.refresh(job)
-
 
 @router.post(
     "",
