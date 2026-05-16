@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 
+from app.api.routes_avatar_jobs import router as avatar_jobs_router
 from app.core.config import settings
+from app.db import models  # noqa: F401
 from app.db.base import Base
 from app.db.session import engine
-from app.db import models  # noqa: F401
 
 
 app = FastAPI(title=settings.app_name)
@@ -21,3 +22,6 @@ def health_check() -> dict:
         "service": settings.app_name,
         "environment": settings.app_env,
     }
+
+
+app.include_router(avatar_jobs_router)

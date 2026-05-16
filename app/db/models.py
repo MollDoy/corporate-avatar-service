@@ -25,6 +25,12 @@ class AvatarJob(Base):
     )
 
     employee_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    style_id: Mapped[str] = mapped_column(
+        String(100),
+        default="default_business",
+        nullable=False,
+    )
+
     status: Mapped[AvatarJobStatus] = mapped_column(
         Enum(AvatarJobStatus),
         default=AvatarJobStatus.queued,
@@ -40,6 +46,7 @@ class AvatarJob(Base):
         default=datetime.utcnow,
         nullable=False,
     )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,
