@@ -20,6 +20,13 @@ def _remove_base64_prefix(image_base64: str) -> str:
     return image_base64
 
 
+def get_job_dir(job_id: str) -> Path:
+    storage_dir = Path(settings.storage_dir)
+    job_dir = storage_dir / "jobs" / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    return job_dir
+
+
 def decode_image_from_base64(image_base64: str) -> Image.Image:
     cleaned_base64 = _remove_base64_prefix(image_base64)
 
@@ -51,11 +58,30 @@ def decode_image_from_base64(image_base64: str) -> Image.Image:
 
 
 def save_source_image(job_id: str, image: Image.Image) -> str:
-    storage_dir = Path(settings.storage_dir)
-    job_dir = storage_dir / "jobs" / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
+    job_dir = get_job_dir(job_id)
 
     image_path = job_dir / "source.png"
     image.save(image_path, format="PNG")
 
     return str(image_path)
+
+
+def save_result_image(job_id: str, image: Image.Image) -> str:
+    job_dir = get_job_dir(job_id)
+
+    image_path = job_dir / "result.png"
+    image.save(image_path, format="PNG")
+
+    return str(image_path)
+
+
+def encode_file_to_base64(file_path: str) -> str:
+    path = Path(file_path)
+
+    if not path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Image file not found",
+        )
+
+    return base64.b64encode(path.read_bytes()).decode("utf-8")

@@ -8,6 +8,7 @@ services:
       - "8000:8000"
     volumes:
       - ./app/storage:/app/storage
+      - ./models/rembg:/app/models/rembg
     depends_on:
       - db
 

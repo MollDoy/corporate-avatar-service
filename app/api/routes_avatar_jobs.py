@@ -3,13 +3,19 @@ from sqlalchemy.orm import Session
 
 from app.core.security import verify_api_key
 from app.db.dependencies import get_db
-from app.db.models import AvatarJob
+from app.db.models import AvatarJob, AvatarJobStatus
 from app.schemas.avatar import (
     AvatarJobCreateRequest,
     AvatarJobCreateResponse,
+    AvatarJobResultResponse,
     AvatarJobStatusResponse,
 )
-from app.services.image_storage import decode_image_from_base64, save_source_image
+from app.services.background_replacement import generate_basic_corporate_avatar
+from app.services.image_storage import (
+    decode_image_from_base64,
+    encode_file_to_base64,
+    save_source_image,
+)
 
 
 router = APIRouter(
@@ -17,6 +23,57 @@ router = APIRouter(
     tags=["avatar-jobs"],
     dependencies=[Depends(verify_api_key)],
 )
+
+
+def _serialize_job(job: AvatarJob) -> AvatarJobStatusResponse:
+    return AvatarJobStatusResponse(
+        job_id=job.id,
+        employee_id=job.employee_id,
+        style_id=job.style_id,
+        status=job.status.value,
+        source_image_path=job.source_image_path,
+        result_image_path=job.result_image_path,
+        error_message=job.error_message,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+
+def _process_job(job: AvatarJob, db: Session) -> None:
+    if not job.source_image_path:
+        job.status = AvatarJobStatus.failed
+        job.error_message = "Source image path is empty"
+        db.add(job)
+        db.commit()
+        return
+
+    try:
+        job.status = AvatarJobStatus.processing
+        job.error_message = None
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        result_image_path = generate_basic_corporate_avatar(
+            job_id=job.id,
+            source_image_path=job.source_image_path,
+        )
+
+        job.result_image_path = result_image_path
+        job.status = AvatarJobStatus.done
+        job.error_message = None
+
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+    except Exception as exc:
+        job.status = AvatarJobStatus.failed
+        job.error_message = str(exc)
+
+        db.add(job)
+        db.commit()
+        db.refresh(job)
 
 
 @router.post(
@@ -28,6 +85,8 @@ def create_avatar_job(
     payload: AvatarJobCreateRequest,
     db: Session = Depends(get_db),
 ) -> AvatarJobCreateResponse:
+    image = decode_image_from_base64(payload.image_base64)
+
     job = AvatarJob(
         employee_id=payload.employee_id,
         style_id=payload.style_id,
@@ -37,7 +96,6 @@ def create_avatar_job(
     db.commit()
     db.refresh(job)
 
-    image = decode_image_from_base64(payload.image_base64)
     source_image_path = save_source_image(job.id, image)
 
     job.source_image_path = source_image_path
@@ -45,6 +103,8 @@ def create_avatar_job(
     db.add(job)
     db.commit()
     db.refresh(job)
+
+    _process_job(job, db)
 
     return AvatarJobCreateResponse(
         job_id=job.id,
@@ -68,14 +128,38 @@ def get_avatar_job(
             detail="Avatar job not found",
         )
 
-    return AvatarJobStatusResponse(
+    return _serialize_job(job)
+
+
+@router.get(
+    "/{job_id}/result",
+    response_model=AvatarJobResultResponse,
+)
+def get_avatar_job_result(
+    job_id: str,
+    db: Session = Depends(get_db),
+) -> AvatarJobResultResponse:
+    job = db.get(AvatarJob, job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Avatar job not found",
+        )
+
+    if job.status != AvatarJobStatus.done:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Avatar job is not done. Current status: {job.status.value}",
+        )
+
+    if not job.result_image_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Result image path is empty",
+        )
+
+    return AvatarJobResultResponse(
         job_id=job.id,
-        employee_id=job.employee_id,
-        style_id=job.style_id,
-        status=job.status.value,
-        source_image_path=job.source_image_path,
-        result_image_path=job.result_image_path,
-        error_message=job.error_message,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
+        image_base64=encode_file_to_base64(job.result_image_path),
     )

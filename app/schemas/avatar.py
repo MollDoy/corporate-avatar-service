@@ -38,3 +38,9 @@ class AvatarJobStatusResponse(BaseModel):
     error_message: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class AvatarJobResultResponse(BaseModel):
+    job_id: str
+    image_base64: str
+    mime_type: str = "image/png"

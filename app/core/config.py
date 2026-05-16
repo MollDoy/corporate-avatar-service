@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     app_name: str = "corporate-avatar-service"
     app_env: str = "dev"
@@ -9,6 +10,10 @@ class Settings(BaseSettings):
 
     storage_dir: str = "/app/storage"
     max_image_mb: int = 10
+
+    u2net_home: str = "/app/models/rembg"
+    rembg_model_name: str = "u2netp"
+    avatar_output_size: int = 512
 
     model_config = SettingsConfigDict(
         env_file=".env",
