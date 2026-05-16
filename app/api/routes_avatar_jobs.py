@@ -101,9 +101,10 @@ def _process_job(job: AvatarJob, db: Session) -> None:
                     "extra limbs, low quality, blurry, artifacts, cartoon, "
                     "t-shirt, casual shirt, hoodie, sweater, sportswear, watch, jewelry"
                 ),
-                steps=16,
-                guidance_scale=8.0,
-                strength=0.85,
+                steps=18,
+                guidance_scale=6.5,
+                strength=0.80,
+                seed=43,
             )
 
         similarity_result = calculate_face_similarity(

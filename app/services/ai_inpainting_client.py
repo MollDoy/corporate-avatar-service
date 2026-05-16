@@ -30,6 +30,7 @@ def run_ai_inpainting(
     steps: int | None = None,
     guidance_scale: float | None = None,
     strength: float | None = None,
+    seed: int = 42,
 ) -> str:
     """
     Calls AI inference service and returns path to generated image.
@@ -45,7 +46,7 @@ def run_ai_inpainting(
         "job_dir": job_dir,
         "input_name": input_name,
         "mask_name": mask_name,
-        "face_mask_name": "face_protection_mask.png",
+        "face_mask_name": "face_restore_mask.png",
         "output_name": output_name,
         "model_id": settings.ai_model_id,
         "prompt": prompt or DEFAULT_PROMPT,
@@ -57,7 +58,7 @@ def run_ai_inpainting(
             else settings.ai_default_guidance_scale
         ),
         "strength": strength if strength is not None else settings.ai_default_strength,
-        "seed": 42,
+        "seed": seed,
         "device": settings.ai_device,
         "dtype": settings.ai_dtype,
         "low_vram": settings.ai_low_vram,

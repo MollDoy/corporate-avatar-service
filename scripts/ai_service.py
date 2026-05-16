@@ -16,7 +16,7 @@ class InpaintRequest(BaseModel):
     job_dir: str
     input_name: str = "result.png"
     mask_name: str = "clothes_mask.png"
-    face_mask_name: str = "face_protection_mask.png"
+    face_mask_name: str = "face_restore_mask.png"
     output_name: str = "ai_result.png"
 
     model_id: str = "stable-diffusion-v1-5/stable-diffusion-inpainting"
@@ -130,7 +130,7 @@ def _restore_protected_face(
     generated = generated_image.convert("RGB")
 
     mask = face_mask.convert("L")
-    mask = mask.filter(ImageFilter.GaussianBlur(radius=1.5))
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=0.8))
 
     return Image.composite(original, generated, mask)
 

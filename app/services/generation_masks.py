@@ -12,6 +12,7 @@ class GenerationMaskPaths:
     person_mask_path: str
     background_mask_path: str
     face_protection_mask_path: str
+    face_restore_mask_path: str
     clothes_mask_path: str
     ai_inpaint_mask_path: str
 
@@ -63,6 +64,34 @@ def _create_face_protection_mask(
 
     return mask.filter(ImageFilter.GaussianBlur(radius=2))
 
+def _create_face_restore_mask(
+    size: tuple[int, int],
+    face: FaceBox,
+) -> Image.Image:
+    """
+    White = face area restored from pre-AI result after inpainting.
+
+    This mask must be smaller than face_protection_mask.
+    It should restore identity, eyes, nose, mouth and most of the face,
+    but should not overwrite shirt collar, tie or upper clothing.
+    """
+    width, height = size
+
+    expansion_x = int(face.width * 0.22)
+    expansion_top = int(face.height * 0.32)
+    expansion_bottom = int(face.height * 0.06)
+
+    left = max(0, face.x - expansion_x)
+    top = max(0, face.y - expansion_top)
+    right = min(width, face.x + face.width + expansion_x)
+    bottom = min(height, face.y + face.height + expansion_bottom)
+
+    mask = Image.new("L", size, 0)
+    draw = ImageDraw.Draw(mask)
+
+    draw.ellipse((left, top, right, bottom), fill=255)
+
+    return mask.filter(ImageFilter.GaussianBlur(radius=0.8))
 
 def _create_clothes_mask(
     person_mask: Image.Image,
@@ -120,6 +149,11 @@ def create_generation_masks(
         face=face,
     )
 
+    face_restore_mask = _create_face_restore_mask(
+        size=person_mask.size,
+        face=face,
+    )
+
     background_mask = ImageChops.invert(person_mask)
     background_mask = _binarize_mask(background_mask)
 
@@ -145,6 +179,11 @@ def create_generation_masks(
         face_protection_mask,
         "face_protection_mask.png",
     )
+    face_restore_mask_path = save_job_image(
+        job_id,
+        face_restore_mask,
+        "face_restore_mask.png",
+    )
     clothes_mask_path = save_job_image(
         job_id,
         clothes_mask,
@@ -160,6 +199,7 @@ def create_generation_masks(
         person_mask_path=person_mask_path,
         background_mask_path=background_mask_path,
         face_protection_mask_path=face_protection_mask_path,
+        face_restore_mask_path=face_restore_mask_path,
         clothes_mask_path=clothes_mask_path,
         ai_inpaint_mask_path=ai_inpaint_mask_path,
     )
