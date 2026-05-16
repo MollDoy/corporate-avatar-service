@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     face_detection_scale_factor: float = 1.1
     face_detection_min_neighbors: int = 5
 
+    face_similarity_threshold: float = 0.45
+    face_similarity_crop_size: int = 160
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

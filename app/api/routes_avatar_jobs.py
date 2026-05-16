@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.security import verify_api_key
 from app.db.dependencies import get_db
 from app.db.models import AvatarJob, AvatarJobStatus
@@ -12,6 +13,7 @@ from app.schemas.avatar import (
 )
 from app.services.background_replacement import generate_basic_corporate_avatar
 from app.services.face_detection import validate_single_face
+from app.services.face_similarity import calculate_face_similarity
 from app.services.image_storage import (
     decode_image_from_base64,
     encode_file_to_base64,
@@ -35,6 +37,7 @@ def _serialize_job(job: AvatarJob) -> AvatarJobStatusResponse:
         source_image_path=job.source_image_path,
         result_image_path=job.result_image_path,
         error_message=job.error_message,
+        face_similarity_score=job.face_similarity_score,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -51,6 +54,7 @@ def _process_job(job: AvatarJob, db: Session) -> None:
     try:
         job.status = AvatarJobStatus.processing
         job.error_message = None
+        job.face_similarity_score = None
         db.add(job)
         db.commit()
         db.refresh(job)
@@ -62,9 +66,24 @@ def _process_job(job: AvatarJob, db: Session) -> None:
             source_image_path=job.source_image_path,
         )
 
+        similarity_result = calculate_face_similarity(
+            source_image_path=job.source_image_path,
+            result_image_path=result_image_path,
+        )
+
         job.result_image_path = result_image_path
-        job.status = AvatarJobStatus.done
-        job.error_message = None
+        job.face_similarity_score = similarity_result.score
+
+        if similarity_result.score < settings.face_similarity_threshold:
+            job.status = AvatarJobStatus.failed
+            job.error_message = (
+                "Face similarity check failed. "
+                f"Score={similarity_result.score}, "
+                f"threshold={settings.face_similarity_threshold}."
+            )
+        else:
+            job.status = AvatarJobStatus.done
+            job.error_message = None
 
         db.add(job)
         db.commit()
@@ -112,6 +131,7 @@ def create_avatar_job(
     return AvatarJobCreateResponse(
         job_id=job.id,
         status=job.status.value,
+        face_similarity_score=job.face_similarity_score,
     )
 
 

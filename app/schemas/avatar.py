@@ -26,6 +26,7 @@ class AvatarJobCreateRequest(BaseModel):
 class AvatarJobCreateResponse(BaseModel):
     job_id: str
     status: str
+    face_similarity_score: float | None = None
 
 
 class AvatarJobStatusResponse(BaseModel):
@@ -36,6 +37,7 @@ class AvatarJobStatusResponse(BaseModel):
     source_image_path: str | None
     result_image_path: str | None
     error_message: str | None
+    face_similarity_score: float | None
     created_at: datetime
     updated_at: datetime
 

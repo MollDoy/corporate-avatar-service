@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, String, Text
+from sqlalchemy import DateTime, Enum, Float, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -25,6 +25,7 @@ class AvatarJob(Base):
     )
 
     employee_id: Mapped[str] = mapped_column(String(100), nullable=False)
+
     style_id: Mapped[str] = mapped_column(
         String(100),
         default="default_business",
@@ -40,6 +41,11 @@ class AvatarJob(Base):
     source_image_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_image_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    face_similarity_score: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
