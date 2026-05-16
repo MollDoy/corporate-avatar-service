@@ -1,11 +1,12 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import verify_api_key
 from app.db.dependencies import get_db
+from app.db.session import SessionLocal
 from app.db.models import AvatarJob, AvatarJobStatus
 from app.schemas.avatar import (
     AvatarJobCreateRequest,
@@ -143,6 +144,26 @@ def _process_job(job: AvatarJob, db: Session) -> None:
         db.commit()
         db.refresh(job)
 
+def _process_job_by_id(job_id: str) -> None:
+    """
+    Processes avatar job in a separate background task.
+
+    A new DB session is created here because SQLAlchemy sessions
+    from request handlers must not be reused in background tasks.
+    """
+    db = SessionLocal()
+
+    try:
+        job = db.get(AvatarJob, job_id)
+
+        if job is None:
+            return
+
+        _process_job(job, db)
+
+    finally:
+        db.close()
+
 @router.post(
     "",
     response_model=AvatarJobCreateResponse,
@@ -150,6 +171,7 @@ def _process_job(job: AvatarJob, db: Session) -> None:
 )
 def create_avatar_job(
     payload: AvatarJobCreateRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> AvatarJobCreateResponse:
     image = decode_image_from_base64(payload.image_base64)
@@ -171,7 +193,7 @@ def create_avatar_job(
     db.commit()
     db.refresh(job)
 
-    _process_job(job, db)
+    background_tasks.add_task(_process_job_by_id, job.id)
 
     return AvatarJobCreateResponse(
         job_id=job.id,
