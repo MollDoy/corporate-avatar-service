@@ -24,40 +24,39 @@ AVATAR_STYLES: dict[str, AvatarStyle] = {
     "default_business": AvatarStyle(
         style_id="default_business",
         title="Default Business",
-        description="Light blue-gray corporate gradient",
-        top_color=(245, 248, 255),
-        bottom_color=(218, 229, 245),
+        description="Clear light blue corporate gradient",
+        top_color=(235, 242, 255),
+        bottom_color=(185, 210, 240),
     ),
     "blue_business": AvatarStyle(
         style_id="blue_business",
         title="Blue Business",
-        description="Cold blue corporate background",
-        top_color=(238, 245, 255),
-        bottom_color=(190, 213, 240),
+        description="More visible cold blue corporate background",
+        top_color=(225, 238, 255),
+        bottom_color=(155, 190, 230),
     ),
     "warm_office": AvatarStyle(
         style_id="warm_office",
         title="Warm Office",
         description="Warm beige office-like background",
-        top_color=(250, 246, 238),
-        bottom_color=(226, 214, 195),
+        top_color=(250, 244, 232),
+        bottom_color=(218, 199, 168),
     ),
     "gray_minimal": AvatarStyle(
         style_id="gray_minimal",
         title="Gray Minimal",
         description="Neutral minimal gray background",
-        top_color=(248, 248, 248),
-        bottom_color=(220, 224, 229),
+        top_color=(242, 245, 249),
+        bottom_color=(198, 207, 219),
     ),
     "ai_business": AvatarStyle(
         style_id="ai_business",
         title="AI Business",
-        description="Experimental Stable Diffusion inpainting mode for background and clothes",
-        top_color=(245, 248, 255),
-        bottom_color=(218, 229, 245),
+        description="AI business portrait with clear light blue corporate gradient",
+        top_color=(235, 242, 255),
+        bottom_color=(185, 210, 240),
     ),
 }
-
 
 def get_avatar_style(style_id: str) -> AvatarStyle:
     return AVATAR_STYLES.get(style_id, AVATAR_STYLES["default_business"])

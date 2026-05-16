@@ -13,7 +13,10 @@ from app.schemas.avatar import (
     AvatarJobResultResponse,
     AvatarJobStatusResponse,
 )
-from app.services.background_replacement import generate_basic_corporate_avatar
+from app.services.background_replacement import (
+    clear_rembg_sessions,
+    generate_basic_corporate_avatar,
+)
 from app.services.face_detection import validate_single_face
 from app.services.face_similarity import calculate_face_similarity
 from app.services.generation_masks import create_generation_masks
@@ -82,6 +85,8 @@ def _process_job(job: AvatarJob, db: Session) -> None:
         final_result_image_path = result_image_path
 
         if job.style_id == "ai_business":
+            clear_rembg_sessions()
+            
             job_dir = str(Path(result_image_path).parent)
 
             final_result_image_path = run_ai_inpainting(

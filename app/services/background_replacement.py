@@ -1,3 +1,4 @@
+import gc
 import os
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,15 @@ def _get_rembg_session() -> Any:
 
     return _sessions[model_name]
 
+def clear_rembg_sessions() -> None:
+    """
+    Releases cached rembg sessions from API process memory.
+
+    This is important before running the heavy AI inpainting service:
+    birefnet-portrait can consume a lot of RAM, and DreamShaper also needs memory.
+    """
+    _sessions.clear()
+    gc.collect()
 
 def _create_gradient_background(
     width: int,
