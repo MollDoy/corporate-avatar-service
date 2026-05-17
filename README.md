@@ -194,7 +194,7 @@ AI_RESTORE_FACE_AFTER_INPAINT=true
 | `AI_DEFAULT_STRENGTH` | Strength по умолчанию |
 | `AI_RESTORE_FACE_AFTER_INPAINT` | Возвращать ли защищённую область лица после генерации |
 
-Секретные значения, например `API_KEY`, должны храниться в `.env`. Файл `.env` не должен попадать в Git.
+Секретные значения, например `API_KEY`, должны храниться в `.env`.
 
 ## Запуск через Docker Compose
 
