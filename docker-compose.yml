@@ -26,6 +26,8 @@ services:
     volumes:
       - ./app/storage:/app/storage
       - ./models/huggingface:/models/huggingface
+    ports:
+      - "8010:8010"
     gpus: all
     profiles:
       - ai
