@@ -1,48 +1,98 @@
 services:
+  db:
+    image: postgres:16
+    container_name: avatar_db
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - avatar_pg_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+
+  migrate:
+    build: .
+    container_name: avatar_migrate
+
+    env_file:
+      - .env
+
+    command:
+      - alembic
+      - upgrade
+      - head
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    volumes:
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini:ro
+
+    restart: "no"
+
+
   api:
     build: .
     container_name: avatar_api
+
     env_file:
       - .env
+
     ports:
       - "8000:8000"
+
     volumes:
       - ./app/storage:/app/storage
       - ./models/rembg:/app/models/rembg
+
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
 
   ai_inpaint:
     build:
       context: .
       dockerfile: Dockerfile.ai
+
     container_name: avatar_ai_inpaint
+
     env_file:
       - .env
+
     environment:
       HF_HOME: /models/huggingface
       HUGGINGFACE_HUB_CACHE: /models/huggingface/hub
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+
     volumes:
       - ./app/storage:/app/storage
       - ./models/huggingface:/models/huggingface
-    ports:
-      - "8010:8010"
+
     gpus: all
+
     profiles:
       - ai
 
-  db:
-    image: postgres:16
-    container_name: avatar_db
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "5432:5432"
-    volumes:
-      - avatar_pg_data:/var/lib/postgresql/data
 
 volumes:
   avatar_pg_data:
