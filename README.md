@@ -8,6 +8,8 @@
 - дорисовывает / заменяет одежду на деловую;
 - сохраняет лицо и проверяет похожесть результата на исходное фото;
 - предоставляет HTTP API;
+- обрабатывает длительные задания через очередь Redis и Celery worker;
+- управляет схемой PostgreSQL через миграции Alembic;
 - содержит расширение 1С:УНФ для вызова сервиса из интерфейса 1С.
 
 ---
@@ -16,6 +18,8 @@
 
 - [Стек](#стек)
 - [Архитектура](#архитектура)
+- [Очередь задач](#очередь-задач)
+- [Миграции базы данных](#миграции-базы-данных)
 - [Структура проекта](#структура-проекта)
 - [Требования к окружению](#требования-к-окружению)
 - [Первый запуск проекта с нуля](#первый-запуск-проекта-с-нуля)
@@ -25,10 +29,11 @@
 - [Настройка и описание .env](#настройка-env)
 - [API](#api)
 - [Тестирование API из WSL](#тестирование-api-из-wsl)
+- [Проверка очереди](#проверка-очереди)
 - [Интеграция с 1С:УНФ](#интеграция-с-1сунф)
 - [Используемые модели](#используемые-модели)
 - [Стили генерации](#стили-генерации)
-- [Очистка временных файлов](#очистка-временных-файлов)
+- [Хранение и очистка файлов](#хранение-и-очистка-файлов)
 - [Возможные проблемы](#возможные-проблемы)
 
 ---
@@ -37,8 +42,11 @@
 
 - Python 3.11
 - FastAPI
-- PostgreSQL
+- PostgreSQL 16
 - SQLAlchemy
+- Alembic
+- Redis
+- Celery
 - Docker / Docker Compose
 - rembg + `birefnet-portrait` для удаления фона
 - OpenCV Haar Cascade для детекции лица
@@ -54,58 +62,200 @@
         |
         | HTTP API
         v
-FastAPI service
+FastAPI service (avatar_api)
         |
-        | сохраняет задачу
+        | создаёт запись задания
         v
-PostgreSQL
+PostgreSQL (avatar_db)
         |
-        | обработка изображения
+        | публикует job_id
+        v
+Redis broker (avatar_redis)
+        |
+        | Celery task
+        v
+Celery worker (avatar_worker, concurrency=1)
+        |
+        | проверка входного фото
+        | удаление фона
         v
 rembg / birefnet-portrait
         |
-        | маски лица, одежды и фона
+        | построение масок лица, одежды и фона
         v
-AI inpainting service / DreamShaper
+AI inpainting service (avatar_ai_inpaint)
         |
-        | восстановление лица
+        | восстановление защищённой области лица
         | проверка похожести лица
         v
-PNG avatar result
+PNG avatar result + обновление статуса в PostgreSQL
 ```
 
-Основной API работает в контейнере:
+Контейнеры проекта:
+
+| Контейнер | Назначение |
+|---|---|
+| `avatar_api` | HTTP API, валидация запроса, сохранение исходника и постановка задания в очередь |
+| `avatar_worker` | Последовательная обработка тяжёлых CV/AI-заданий |
+| `avatar_redis` | Брокер очереди Celery |
+| `avatar_ai_inpaint` | Stable Diffusion inpainting на CPU/GPU |
+| `avatar_db` | PostgreSQL со статусами и метаданными заданий |
+| `avatar_migrate` | Одноразовое применение миграций Alembic при запуске |
+
+Основной API не выполняет генерацию внутри HTTP-процесса. После создания записи он публикует идентификатор задания в Redis и сразу возвращает клиенту `job_id` со статусом `queued`.
+
+Тяжёлая обработка выполняется отдельным Celery worker. В текущей конфигурации используется один рабочий процесс, чтобы несколько одновременных запросов не запускали несколько экземпляров BiRefNet и DreamShaper параллельно на ограниченных ресурсах.
+
+AI inpainting вынесен в отдельный контейнер: PyTorch, diffusers и модели Stable Diffusion занимают много места и требуют GPU, поэтому они не смешиваются с API- и worker-контейнерами.
+
+Изображения хранятся локально в `app/storage/jobs`. Для текущего MVP этого достаточно. Для распределённого развёртывания с несколькими worker-узлами локальное хранилище следует заменить на S3-совместимое хранилище, например MinIO или Amazon S3.
+
+---
+
+## Очередь задач
+
+Очередь реализована через Redis и Celery.
+
+При создании задания выполняется следующая последовательность:
 
 ```text
-avatar_api
+POST /api/v1/avatar-jobs
+        ↓
+создание записи PostgreSQL со статусом queued
+        ↓
+сохранение source.png
+        ↓
+публикация job_id в Redis
+        ↓
+Celery worker получает задачу
+        ↓
+status: processing
+        ↓
+генерация
+        ↓
+status: done или failed
 ```
 
-AI inpainting вынесен в отдельный контейнер:
+Основные настройки worker в `docker-compose.yml`:
 
 ```text
-avatar_ai_inpaint
+--concurrency=1
+--prefetch-multiplier=1
+--max-tasks-per-child=1
 ```
 
-База PostgreSQL работает в контейнере:
+Их назначение:
+
+- `concurrency=1` — одновременно выполняется только одно тяжёлое задание;
+- `prefetch-multiplier=1` — worker не резервирует большую пачку заданий заранее;
+- `max-tasks-per-child=1` — дочерний процесс Celery завершается после каждого задания, что позволяет операционной системе освободить RAM, занятую ONNX Runtime и обработкой изображений.
+
+В конфигурации Celery также включены:
+
+- позднее подтверждение задания после завершения обработки;
+- возврат сообщения в очередь при аварийном завершении worker-процесса;
+- повторное подключение к Redis при старте;
+- `visibility_timeout` для длительных задач.
+
+Статус `queued` теперь означает, что задание не только записано в PostgreSQL, но и опубликовано в реальную очередь Redis.
+
+---
+
+## Миграции базы данных
+
+Структура PostgreSQL управляется через Alembic.
+
+В проекте больше не используется автоматическое создание таблиц через:
+
+```python
+Base.metadata.create_all(...)
+```
+
+При запуске Compose одноразовый контейнер:
 
 ```text
-avatar_db
+avatar_migrate
 ```
 
-Разделение API и AI-контейнера сделано специально: PyTorch, diffusers и модели Stable Diffusion занимают много места и требуют GPU, поэтому они не смешиваются с основным API-контейнером.
+выполняет:
+
+```bash
+alembic upgrade head
+```
+
+API и worker запускаются только после успешного завершения миграций.
+
+Начальная миграция:
+
+```text
+alembic/versions/0001_create_avatar_jobs.py
+```
+
+Она создаёт:
+
+- PostgreSQL enum `avatarjobstatus`;
+- таблицу `avatar_jobs`;
+- служебную таблицу Alembic `alembic_version`.
+
+Проверить текущую ревизию после запуска проекта:
+
+```bash
+docker compose exec api alembic current
+```
+
+Посмотреть историю миграций:
+
+```bash
+docker compose exec api alembic history
+```
+
+Проверить, совпадают ли SQLAlchemy-модели с последней миграцией:
+
+```bash
+docker compose run --rm migrate alembic check
+```
+
+После изменения моделей создать новую ревизию:
+
+```bash
+docker compose run --rm migrate \
+  alembic revision --autogenerate -m "describe schema change"
+```
+
+Сгенерированный файл необходимо проверить вручную, затем применить:
+
+```bash
+docker compose run --rm migrate alembic upgrade head
+```
+
+Откатить одну ревизию:
+
+```bash
+docker compose run --rm migrate alembic downgrade -1
+```
+
+Изменения Redis, Celery и переменных окружения не требуют миграции, если структура таблиц PostgreSQL не меняется.
 
 ---
 
 ## Структура проекта
 
 ```text
+alembic/
+  env.py               конфигурация Alembic и подключение Base.metadata
+  script.py.mako       шаблон новых ревизий
+  versions/            файлы миграций
+
 app/
   api/                 FastAPI routes
   core/                настройки и безопасность
   db/                  SQLAlchemy models/session
   schemas/             Pydantic-схемы API
   services/            CV/AI/image-processing логика
+  tasks/               Celery-задачи
   storage/             локальное хранилище job-файлов, не коммитится
+  celery_app.py        конфигурация Celery
+  main.py              точка входа FastAPI
 
 scripts/
   ai_service.py
@@ -121,13 +271,14 @@ scripts/
                        экспериментальный запуск AI inpainting
 
 onec_config/
-  КорпоративныеАватарыИИ.cfe
+  *.cfe
                        расширение 1С:УНФ
 
-Dockerfile             основной API-контейнер
+alembic.ini            настройки Alembic
+Dockerfile             образ API, worker и migrate
 Dockerfile.ai          AI-контейнер
-docker-compose.yml     запуск API + PostgreSQL + AI profile
-requirements.txt       зависимости основного API
+docker-compose.yml     PostgreSQL + Redis + migrate + API + worker + AI profile
+requirements.txt       зависимости API, worker и миграций
 requirements-ai.txt    зависимости AI-сервиса
 .env.example           пример переменных окружения
 README.md              документация проекта
@@ -156,7 +307,7 @@ docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 
 Если GPU отображается, AI-контейнер сможет использовать CUDA.
 
-Если GPU не доступен, можно попробовать переключить AI на CPU через `.env`:
+Если GPU недоступен, можно переключить AI на CPU через `.env`:
 
 ```env
 AI_DEVICE=cpu
@@ -164,6 +315,8 @@ AI_DTYPE=float32
 ```
 
 Но генерация AI-одежды на CPU будет очень медленной.
+
+Для сборки AI-образа требуется значительный объём диска. Рекомендуется иметь не менее 40–50 ГБ свободного места на диске, где расположен виртуальный диск Docker Desktop.
 
 ---
 
@@ -180,9 +333,7 @@ docker version
 docker compose version
 ```
 
-Если команды не работают, проверьте, что в Docker Desktop включена WSL Integration для вашей Ubuntu.
-
-Обычно это находится здесь:
+Если команды не работают, проверьте, что в Docker Desktop включена WSL Integration для вашей Ubuntu:
 
 ```text
 Docker Desktop → Settings → Resources → WSL Integration
@@ -215,6 +366,8 @@ code .env
 ```env
 API_KEY=change_me
 DATABASE_URL=postgresql+psycopg://avatar_user:avatar_pass@db:5432/avatar_db
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_QUEUE_NAME=avatar_jobs
 REMBG_MODEL_NAME=birefnet-portrait
 AI_MODEL_ID=Lykon/dreamshaper-8-inpainting
 AI_DEVICE=cuda
@@ -224,7 +377,30 @@ AI_LOW_VRAM=true
 
 ---
 
-### 4. Проверить GPU в Docker
+### 4. Проверить исходный код и Compose
+
+Проверка синтаксиса Python:
+
+```bash
+python3 -m compileall -q app scripts
+echo $?
+```
+
+Ожидаемый код возврата:
+
+```text
+0
+```
+
+Проверка итоговой конфигурации Compose:
+
+```bash
+docker compose --profile ai config
+```
+
+---
+
+### 5. Проверить GPU в Docker
 
 Для режима `ai_business` желательно наличие NVIDIA GPU:
 
@@ -236,26 +412,35 @@ docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 
 ---
 
-### 5. Собрать основной API-контейнер
+### 6. Собрать основной образ
 
 ```bash
-docker compose build api
+docker compose build --provenance=false api
 ```
 
-Этот контейнер содержит:
+Этот образ используется сразу тремя сервисами:
+
+- `avatar_api`;
+- `avatar_worker`;
+- `avatar_migrate`.
+
+Он содержит:
 
 - FastAPI;
 - SQLAlchemy;
+- Alembic;
+- Celery;
+- Redis client;
 - rembg;
 - OpenCV;
 - основную бизнес-логику сервиса.
 
 ---
 
-### 6. Собрать AI-контейнер
+### 7. Собрать AI-контейнер
 
 ```bash
-docker compose build ai_inpaint
+docker compose build --provenance=false ai_inpaint
 ```
 
 Этот шаг может выполняться долго, потому что устанавливаются:
@@ -266,23 +451,19 @@ docker compose build ai_inpaint
 - accelerate;
 - другие AI-зависимости.
 
+Флаг `--provenance=false` отключает дополнительные build-attestations, которые не нужны для локального учебного проекта.
+
 ---
 
-### 7. Запустить проект
+### 8. Запустить проект
 
-Полный запуск API + PostgreSQL + AI-сервиса:
-
-```bash
-docker compose --profile ai up
-```
-
-Запуск в фоне:
+Полный запуск PostgreSQL, Redis, миграций, API, worker и AI-сервиса:
 
 ```bash
 docker compose --profile ai up -d
 ```
 
-При первом запуске модели будут скачаны автоматически:
+При первом запуске модели будут скачаны автоматически в каталоги:
 
 ```text
 models/rembg
@@ -291,23 +472,43 @@ models/huggingface
 
 ---
 
-### 8. Проверить контейнеры
+### 9. Проверить контейнеры
 
 ```bash
-docker ps
+docker compose --profile ai ps -a
 ```
 
-Ожидаемые контейнеры:
+Ожидаемое состояние:
 
 ```text
-avatar_api
-avatar_ai_inpaint
-avatar_db
+avatar_db           Up (healthy)
+avatar_redis        Up (healthy)
+avatar_migrate      Exited (0)
+avatar_api          Up
+avatar_ai_inpaint   Up (healthy)
+avatar_worker       Up
+```
+
+Статус `Exited (0)` у `avatar_migrate` является нормальным: контейнер применил миграции и завершился без ошибки.
+
+---
+
+### 10. Проверить миграции
+
+```bash
+docker compose logs migrate
+docker compose exec api alembic current
+```
+
+Ожидаемая ревизия:
+
+```text
+0001_create_avatar_jobs (head)
 ```
 
 ---
 
-### 9. Проверить API
+### 11. Проверить API
 
 ```bash
 curl http://localhost:8000/health
@@ -325,7 +526,34 @@ curl http://localhost:8000/health
 
 ---
 
-### 10. Проверить AI-сервис
+### 12. Проверить Redis, worker и AI-сервис
+
+Redis:
+
+```bash
+docker compose exec redis redis-cli ping
+```
+
+Ожидаемый ответ:
+
+```text
+PONG
+```
+
+Worker:
+
+```bash
+docker compose logs worker
+```
+
+В логе должны присутствовать сообщения:
+
+```text
+celery@... ready
+app.tasks.avatar_jobs.process_avatar_job
+```
+
+AI-сервис:
 
 ```bash
 docker exec -it avatar_api python -c "import httpx; print(httpx.get('http://ai_inpaint:8010/health', timeout=10).json())"
@@ -356,7 +584,7 @@ docker compose --profile ai up -d
 Проверка:
 
 ```bash
-docker ps
+docker compose --profile ai ps -a
 curl http://localhost:8000/health
 ```
 
@@ -364,20 +592,18 @@ curl http://localhost:8000/health
 
 ## Запуск со сборкой одной командой
 
-Можно использовать короткий вариант:
+Можно использовать:
 
 ```bash
-docker compose --profile ai up --build
+docker compose --profile ai up -d --build
 ```
 
-Эта команда одновременно пересобирает изменённые образы и запускает контейнеры.
-
-Но для первого запуска рекомендуется выполнять шаги отдельно:
+Но для первого запуска рекомендуется собирать тяжёлый AI-образ отдельно, чтобы проще диагностировать нехватку диска или сбой Docker Desktop:
 
 ```bash
-docker compose build api
-docker compose build ai_inpaint
-docker compose --profile ai up
+docker compose build --provenance=false api
+docker compose build --provenance=false ai_inpaint
+docker compose --profile ai up -d
 ```
 
 ---
@@ -386,12 +612,14 @@ docker compose --profile ai up
 
 ### Изменился код в `app/`
 
-Например, изменены FastAPI routes, сервисы обработки изображений, настройки:
+Например, изменены FastAPI routes, Celery-задачи, worker, сервисы обработки изображений или настройки:
 
 ```bash
 docker compose build api
 docker compose --profile ai up -d
 ```
+
+После пересборки одного API-образа обновляются `api`, `worker` и `migrate`, поскольку они используют один и тот же image.
 
 ---
 
@@ -422,6 +650,24 @@ docker compose --profile ai up -d
 
 ---
 
+### Изменилась SQLAlchemy-модель
+
+Сначала создайте и проверьте новую миграцию:
+
+```bash
+docker compose run --rm migrate \
+  alembic revision --autogenerate -m "describe schema change"
+```
+
+Затем пересоберите основной образ и запустите Compose:
+
+```bash
+docker compose build api
+docker compose --profile ai up -d
+```
+
+---
+
 ### Изменился только `.env`
 
 Обычно достаточно пересоздать контейнеры:
@@ -440,13 +686,23 @@ docker compose --profile ai up -d --force-recreate
 docker compose --profile ai down
 ```
 
-Остановить контейнеры и удалить volume PostgreSQL:
+Остановить контейнеры и удалить именованные volumes PostgreSQL и Redis:
 
 ```bash
 docker compose --profile ai down -v
 ```
 
-Команду `down -v` используйте осторожно: она удалит данные PostgreSQL.
+Команду `down -v` используйте осторожно: она удалит базу заданий PostgreSQL и сохранённую очередь Redis.
+
+Локальные bind-mounted файлы в:
+
+```text
+app/storage
+models/rembg
+models/huggingface
+```
+
+команда `down -v` не удаляет.
 
 ---
 
@@ -465,6 +721,10 @@ APP_NAME=corporate-avatar-service
 APP_ENV=dev
 API_KEY=change_me
 
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_QUEUE_NAME=avatar_jobs
+CELERY_VISIBILITY_TIMEOUT=3600
+
 POSTGRES_DB=avatar_db
 POSTGRES_USER=avatar_user
 POSTGRES_PASSWORD=avatar_pass
@@ -478,6 +738,10 @@ MAX_IMAGE_MB=10
 
 U2NET_HOME=/app/models/rembg
 REMBG_MODEL_NAME=birefnet-portrait
+REMBG_MAX_INPUT_SIZE=1280
+REMBG_ALPHA_MATTING=false
+REMBG_OMP_NUM_THREADS=2
+
 AVATAR_OUTPUT_SIZE=512
 MASK_FEATHER_RADIUS=0.8
 
@@ -511,16 +775,22 @@ AI_RESTORE_FACE_AFTER_INPAINT=true
 | `APP_NAME` | Название приложения FastAPI |
 | `APP_ENV` | Окружение приложения, например `dev` |
 | `API_KEY` | API-ключ, который передаётся в HTTP-заголовке `x-api-key` |
+| `CELERY_BROKER_URL` | URL Redis, используемого как брокер Celery |
+| `CELERY_QUEUE_NAME` | Имя очереди тяжёлых заданий |
+| `CELERY_VISIBILITY_TIMEOUT` | Срок, в течение которого взятое worker задание считается невидимым для других потребителей |
 | `POSTGRES_DB` | Имя базы PostgreSQL |
 | `POSTGRES_USER` | Пользователь PostgreSQL |
 | `POSTGRES_PASSWORD` | Пароль PostgreSQL |
 | `POSTGRES_HOST` | Host PostgreSQL внутри Docker Compose, обычно `db` |
 | `POSTGRES_PORT` | Порт PostgreSQL |
 | `DATABASE_URL` | SQLAlchemy DSN для подключения к PostgreSQL |
-| `STORAGE_DIR` | Папка хранения изображений внутри контейнера |
+| `STORAGE_DIR` | Папка хранения изображений внутри контейнеров |
 | `MAX_IMAGE_MB` | Максимальный размер входного изображения |
-| `U2NET_HOME` | Папка хранения моделей rembg внутри API-контейнера |
+| `U2NET_HOME` | Папка хранения моделей rembg внутри worker-контейнера |
 | `REMBG_MODEL_NAME` | Модель удаления фона. Рекомендуемый вариант: `birefnet-portrait` |
+| `REMBG_MAX_INPUT_SIZE` | Максимальный размер длинной стороны рабочей копии перед BiRefNet |
+| `REMBG_ALPHA_MATTING` | Включение ресурсоёмкого alpha matting после сегментации |
+| `REMBG_OMP_NUM_THREADS` | Ограничение числа потоков ONNX Runtime |
 | `AVATAR_OUTPUT_SIZE` | Размер итогового изображения, по умолчанию 512x512 |
 | `MASK_FEATHER_RADIUS` | Радиус сглаживания маски при замене фона |
 | `FACE_MIN_SIZE_RATIO` | Минимальный относительный размер лица для проверки входного фото |
@@ -532,16 +802,20 @@ AI_RESTORE_FACE_AFTER_INPAINT=true
 | `AI_MODEL_ID` | Hugging Face model id для inpainting |
 | `AI_SERVICE_URL` | URL AI-сервиса внутри Docker Compose |
 | `AI_DEVICE` | Устройство для AI: `cuda` или `cpu` |
-| `AI_DTYPE` | Тип вычислений: `float32` выбран для стабильности на GTX 1660 |
-| `AI_LOW_VRAM` | Режим экономии видеопамяти |
+| `AI_DTYPE` | Тип вычислений. В текущей конфигурации используется `float32` для стабильности на GTX 1660 |
+| `AI_LOW_VRAM` | Режим экономии видеопамяти через model CPU offload |
 | `AI_OUTPUT_NAME` | Имя итогового AI-файла в папке job |
-| `AI_INPAINT_TIMEOUT_SECONDS` | Таймаут запроса к AI-сервису |
+| `AI_INPAINT_TIMEOUT_SECONDS` | Таймаут запроса worker к AI-сервису |
 | `AI_DEFAULT_STEPS` | Значение по умолчанию для количества diffusion-шагов |
 | `AI_DEFAULT_GUIDANCE_SCALE` | Значение по умолчанию для guidance scale |
 | `AI_DEFAULT_STRENGTH` | Значение по умолчанию для strength |
 | `AI_RESTORE_FACE_AFTER_INPAINT` | Возвращать ли защищённую область лица после генерации |
 
-Важно: в текущей версии для основного стиля `ai_business` итоговые параметры AI-генерации зафиксированы в коде `app/api/routes_avatar_jobs.py`:
+Для основного стиля `ai_business` параметры генерации зафиксированы в:
+
+```text
+app/services/avatar_job_processor.py
+```
 
 ```python
 steps=18
@@ -588,7 +862,7 @@ POST /api/v1/avatar-jobs
 }
 ```
 
-Сервис создаёт задачу и сразу возвращает `job_id`. Обработка выполняется в фоне.
+Сервис создаёт запись задания, сохраняет исходник, публикует `job_id` в очередь Celery и сразу возвращает ответ. Генерация выполняется отдельным worker.
 
 Пример ответа:
 
@@ -599,6 +873,8 @@ POST /api/v1/avatar-jobs
   "face_similarity_score": null
 }
 ```
+
+Если Redis или очередь недоступны, API возвращает HTTP `503 Service Unavailable`, а задание получает статус `failed`.
 
 ---
 
@@ -728,28 +1004,82 @@ ai_result.png
 
 ---
 
+## Проверка очереди
+
+Посмотреть количество ожидающих сообщений в Redis:
+
+```bash
+docker compose exec redis redis-cli LLEN avatar_jobs
+```
+
+Посмотреть активные задачи Celery:
+
+```bash
+docker compose exec worker \
+  celery -A app.celery_app.celery_app inspect active
+```
+
+Посмотреть зарезервированные задачи:
+
+```bash
+docker compose exec worker \
+  celery -A app.celery_app.celery_app inspect reserved
+```
+
+Следить за логом worker:
+
+```bash
+docker compose logs -f worker
+```
+
+Проверить последние статусы PostgreSQL:
+
+```bash
+docker compose exec db \
+  psql -U avatar_user -d avatar_db \
+  -c "
+  SELECT id, status, created_at, updated_at
+  FROM avatar_jobs
+  ORDER BY created_at DESC
+  LIMIT 10;
+  "
+```
+
+При одновременной отправке трёх заданий ожидаемая картина во время обработки первого:
+
+```text
+processing
+queued
+queued
+```
+
+---
+
 ## Интеграция с 1С:УНФ
 
-В проекте находится расширение:
+В каталоге:
 
 ```text
-onec_config/КорпоративныеАватарыИИ.cfe
+onec_config/
 ```
 
-Расширение содержит обработку:
+находится расширение 1С:УНФ в формате `.cfe`.
 
-```text
-Генерация корпоративного аватара
-```
+Расширение позволяет:
 
-Обработка позволяет:
-
-- выбрать портретное фото сотрудника;
-- отправить фото в FastAPI-сервис;
+- выбрать сотрудника справочника `Сотрудники`;
+- выбрать исходную портретную фотографию;
+- отправить изображение и UUID сотрудника в FastAPI-сервис;
 - получить `job_id`;
-- периодически проверять статус задачи;
+- периодически опрашивать статус `queued`, `processing`, `done` или `failed`;
+- получить готовый PNG;
+- записать результат в регистр сведений `АватарыСотрудников`;
+- хранить несколько вариантов аватара сотрудника;
+- отмечать один вариант как активный;
+- открывать историю аватаров из карточки сотрудника;
+- просматривать ранее созданный аватар и менять активный вариант.
 
-После выполнения обработки автоматически откроется результат стандартным просмотрщиком Windows с возможностью скачать готовый PNG.
+После успешной генерации результат также открывается стандартным просмотрщиком Windows.
 
 ---
 
@@ -762,10 +1092,10 @@ onec_config/КорпоративныеАватарыИИ.cfe
    Конфигурация → Расширения конфигурации
    ```
 
-3. Добавьте расширение из файла:
+3. Добавьте `.cfe` из каталога:
 
    ```text
-   onec_config/КорпоративныеАватарыИИ.cfe
+   onec_config/
    ```
 
 4. Убедитесь, что расширение активно.
@@ -776,7 +1106,7 @@ onec_config/КорпоративныеАватарыИИ.cfe
 
 ### Использование обработки
 
-В учебной / демо УНФ обработку можно открыть через подсистему Корпоративные аватары ИИ, а также через:
+В учебной / демо УНФ обработку можно открыть через подсистему **Корпоративные аватары ИИ**, а также через:
 
 ```text
 Функции для технического специалиста
@@ -792,21 +1122,22 @@ onec_config/КорпоративныеАватарыИИ.cfe
    - API-ключ: `change_me`;
    - стиль: `ai_business`.
 
-2. Нажмите **Выбрать фото**.
+2. Выберите сотрудника.
+3. Нажмите **Выбрать фото**.
+4. Выберите портретное изображение.
+5. Нажмите **Сгенерировать аватар**.
+6. Обработка создаст задачу и будет периодически проверять её состояние.
+7. После завершения PNG будет записан в историю сотрудника и открыт автоматически.
 
-3. Выберите портретное изображение.
-
-4. Нажмите **Сгенерировать аватар**.
-
-5. Обработка создаст задачу и будет периодически проверять статус.
-
-6. После завершения готовый PNG откроется автоматически.
+История открывается командой **История аватаров** из карточки конкретного сотрудника.
 
 Перед запуском генерации из 1С сервис должен быть запущен:
 
 ```bash
 docker compose --profile ai up -d
 ```
+
+Если Python-сервис развёрнут на отдельном сервере, вместо `localhost` укажите IP-адрес или DNS-имя этого сервера. `localhost` всегда означает компьютер, на котором запущен конкретный клиент 1С.
 
 ---
 
@@ -830,6 +1161,26 @@ u2net_human_seg
 
 `birefnet-portrait` показала лучший результат на портретных фото, особенно на волосах.
 
+В текущей конфигурации BiRefNet выполняется на CPU внутри `avatar_worker`. Перед сегментацией рабочая копия изображения ограничивается параметром:
+
+```env
+REMBG_MAX_INPUT_SIZE=1280
+```
+
+Ресурсоёмкий alpha matting по умолчанию отключён:
+
+```env
+REMBG_ALPHA_MATTING=false
+```
+
+Количество потоков ONNX Runtime ограничивается через:
+
+```env
+REMBG_OMP_NUM_THREADS=2
+```
+
+После этапа сегментации rembg-сессия освобождается до запуска DreamShaper. Дополнительно `max-tasks-per-child=1` завершает дочерний процесс Celery после задания и освобождает его оперативную память.
+
 ---
 
 ### Генерация деловой одежды
@@ -850,6 +1201,17 @@ face_restore_mask.png
 
 После inpainting лицо частично возвращается из исходного результата, чтобы сохранить индивидуальность.
 
+В AI-сервисе применяется блокировка инференса, поэтому даже при прямых одновременных HTTP-вызовах GPU-генерация выполняется последовательно.
+
+Для GTX 1660 используется:
+
+```env
+AI_DTYPE=float32
+AI_LOW_VRAM=true
+```
+
+Режим `AI_LOW_VRAM=true` включает перенос компонентов модели между CPU и GPU, снижая требования к видеопамяти ценой дополнительного потребления RAM и времени передачи данных.
+
 ---
 
 ### Проверка сохранности лица
@@ -865,13 +1227,10 @@ face_restore_mask.png
    ```
 
 2. Из обоих изображений вырезаются области лица с небольшим отступом.
-
 3. Оба crop приводятся к одному размеру, переводятся в grayscale и нормализуются.
-
 4. Считаются две метрики:
    - pixel similarity — средняя попиксельная близость подготовленных crop;
    - histogram similarity — похожесть HSV-гистограмм.
-
 5. Итоговый score считается как взвешенная сумма:
 
    ```python
@@ -922,7 +1281,13 @@ gray_minimal
 
 ---
 
-## Очистка временных файлов
+## Хранение и очистка файлов
+
+Для каждого задания создаётся локальный каталог:
+
+```text
+app/storage/jobs/<job_id>/
+```
 
 Сгенерированные изображения не должны попадать в репозиторий.
 
@@ -930,6 +1295,7 @@ gray_minimal
 
 ```bash
 rm -rf app/storage/jobs/*
+touch app/storage/jobs/.gitkeep
 ```
 
 Очистить Docker build cache:
@@ -944,13 +1310,13 @@ docker builder prune
 docker compose --profile ai down
 ```
 
-Остановить сервисы и удалить volume PostgreSQL:
+Остановить сервисы и удалить volumes PostgreSQL и Redis:
 
 ```bash
 docker compose --profile ai down -v
 ```
 
-Команда `down -v` удалит данные PostgreSQL.
+Для промышленного распределённого развёртывания локальные job-каталоги следует заменить на S3-совместимое объектное хранилище.
 
 ---
 
@@ -958,7 +1324,7 @@ docker compose --profile ai down -v
 
 ### `Invalid base64 image`
 
-Проверьте, что ваша base64 строка не содержит следующих символов:
+Проверьте, что base64-строка не содержит:
 
 ```text
 CR
@@ -971,17 +1337,79 @@ LF
 
 ---
 
-### `avatar_api` пропадает из `docker ps`
+### Задание остаётся в `queued`
 
-Возможна нехватка RAM при работе.
+Проверьте Redis:
 
-В коде предусмотрена очистка rembg-сессии перед AI inpainting.
+```bash
+docker compose exec redis redis-cli ping
+docker compose exec redis redis-cli LLEN avatar_jobs
+```
 
-При повторении проблемы увеличьте память Docker Desktop:
+Проверьте worker:
+
+```bash
+docker compose --profile ai ps -a
+docker compose logs worker
+```
+
+В логе worker должна быть зарегистрирована задача:
 
 ```text
-Docker Desktop → Settings → Resources → Memory
+app.tasks.avatar_jobs.process_avatar_job
 ```
+
+Проверьте активные и зарезервированные задания:
+
+```bash
+docker compose exec worker \
+  celery -A app.celery_app.celery_app inspect active
+
+docker compose exec worker \
+  celery -A app.celery_app.celery_app inspect reserved
+```
+
+---
+
+### `avatar_worker` завершается во время BiRefNet
+
+Посмотрите состояние контейнеров и потребление памяти:
+
+```bash
+docker compose --profile ai ps -a
+watch -n 1 'docker stats --no-stream avatar_api avatar_worker avatar_ai_inpaint avatar_redis avatar_db'
+```
+
+Тяжёлая сегментация выполняется в `avatar_worker`, а не в `avatar_api`.
+
+Проверьте параметры:
+
+```env
+REMBG_MAX_INPUT_SIZE=1280
+REMBG_ALPHA_MATTING=false
+REMBG_OMP_NUM_THREADS=2
+```
+
+В `docker-compose.yml` должны оставаться:
+
+```text
+--concurrency=1
+--max-tasks-per-child=1
+```
+
+---
+
+### `avatar_api` недоступен или возвращает 503 при создании задания
+
+Проверьте Redis и API:
+
+```bash
+docker compose logs api
+docker compose logs redis
+docker compose exec redis redis-cli ping
+```
+
+HTTP `503 Service Unavailable` при `POST /api/v1/avatar-jobs` означает, что API не смог опубликовать задание в очередь.
 
 ---
 
@@ -993,11 +1421,77 @@ Docker Desktop → Settings → Resources → Memory
 docker compose --profile ai up -d
 ```
 
-В `docker ps` должен быть контейнер:
+В списке должен быть контейнер:
 
 ```text
 avatar_ai_inpaint
 ```
+
+Проверьте healthcheck и логи:
+
+```bash
+docker compose --profile ai ps -a
+docker compose logs ai_inpaint
+```
+
+---
+
+### Ошибка CUDA или нехватка VRAM
+
+Проверьте фактические настройки API:
+
+```bash
+docker compose exec api sh -lc \
+  'env | grep -E "AI_DTYPE|AI_LOW_VRAM|AI_MODEL_ID"'
+```
+
+Для текущей GTX 1660 ожидается:
+
+```text
+AI_DTYPE=float32
+AI_LOW_VRAM=true
+AI_MODEL_ID=Lykon/dreamshaper-8-inpainting
+```
+
+Контроль GPU:
+
+```bash
+watch -n 1 nvidia-smi
+```
+
+AI-сервис содержит внутреннюю блокировку, поэтому несколько одновременных запросов не должны выполнять несколько GPU-инференсов параллельно.
+
+---
+
+### Миграции не применились
+
+Проверьте одноразовый контейнер:
+
+```bash
+docker compose --profile ai ps -a
+docker compose logs migrate
+```
+
+Успешный статус:
+
+```text
+avatar_migrate    Exited (0)
+```
+
+Проверка ревизии:
+
+```bash
+docker compose exec api alembic current
+```
+
+Если база тестовая и может быть удалена, её можно создать заново:
+
+```bash
+docker compose --profile ai down -v
+docker compose --profile ai up -d
+```
+
+Эта команда также удалит очередь Redis.
 
 ---
 
@@ -1034,7 +1528,7 @@ docker builder prune
 docker system prune -a
 ```
 
-Осторожно: команда удаляет неиспользуемые образы. После неё Docker может заново скачивать и пересобирать образы.
+Осторожно: команда удаляет неиспользуемые образы. После неё Docker может заново скачивать зависимости и пересобирать образы.
 
 Если нужно полностью удалить ещё и неиспользуемые volumes:
 
@@ -1042,7 +1536,15 @@ docker system prune -a
 docker system prune -a --volumes
 ```
 
-Осторожно: эта команда может удалить volume PostgreSQL с тестовыми данными.
+Осторожно: команда может удалить volumes PostgreSQL и Redis.
+
+Если во время экспорта крупного AI-образа Docker Desktop завершается с `EOF`, `SIGBUS`, `containerd failed` или `Input/output error`, сначала проверьте свободное место на системном диске. При повреждении внутреннего Docker-хранилища используйте:
+
+```text
+Docker Desktop → Troubleshoot → Clean / Purge data
+```
+
+Для WSL-проекта следует очищать набор данных `WSL 2`. Это удаляет Docker-образы, контейнеры и volumes, но не удаляет пользовательский Ubuntu-дистрибутив и проект в `/home/<user>/Projects`.
 
 ---
 
@@ -1165,9 +1667,7 @@ The process cannot access the file because it is being used by another process
 wsl --shutdown
 ```
 
-Проверьте, что Docker Desktop полностью закрыт.
-
-После этого снова выполните команду `diskpart`.
+Проверьте, что Docker Desktop полностью закрыт, и снова выполните `diskpart`.
 
 ---
 
@@ -1183,12 +1683,12 @@ df -h
 du -sh models/*
 ```
 
-Если Docker-образы были удалены через `docker system prune -a`, при следующем запуске проекта потребуется повторная сборка:
+Если Docker-образы были удалены, потребуется повторная сборка:
 
 ```bash
-docker compose build api
-docker compose build ai_inpaint
-docker compose --profile ai up
+docker compose build --provenance=false api
+docker compose build --provenance=false ai_inpaint
+docker compose --profile ai up -d
 ```
 
 ---
