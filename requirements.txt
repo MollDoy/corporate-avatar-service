@@ -11,3 +11,4 @@ rembg[cpu]==2.0.75
 opencv-python-headless==4.13.0.92
 httpx==0.28.1
 alembic==1.18.4
+celery[redis]==5.6.3

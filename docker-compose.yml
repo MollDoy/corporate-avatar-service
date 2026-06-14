@@ -24,18 +24,72 @@ services:
       timeout: 5s
       retries: 10
 
+    restart: unless-stopped
+
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: avatar_redis
+
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec"
+      ]
+
+    volumes:
+      - avatar_redis_data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+    restart: unless-stopped
+
+
+  api:
+    build: .
+    image: corporate-avatar-service-api:latest
+    container_name: avatar_api
+
+    env_file:
+      - .env
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - ./app/storage:/app/storage
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+    restart: unless-stopped
+
 
   migrate:
-    build: .
+    image: corporate-avatar-service-api:latest
     container_name: avatar_migrate
 
     env_file:
       - .env
 
     command:
-      - alembic
-      - upgrade
-      - head
+      [
+        "alembic",
+        "upgrade",
+        "head"
+      ]
 
     depends_on:
       db:
@@ -48,32 +102,12 @@ services:
     restart: "no"
 
 
-  api:
-    build: .
-    container_name: avatar_api
-
-    env_file:
-      - .env
-
-    ports:
-      - "8000:8000"
-
-    volumes:
-      - ./app/storage:/app/storage
-      - ./models/rembg:/app/models/rembg
-
-    depends_on:
-      db:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-
-
   ai_inpaint:
     build:
       context: .
       dockerfile: Dockerfile.ai
 
+    image: corporate-avatar-service-ai-inpaint:latest
     container_name: avatar_ai_inpaint
 
     env_file:
@@ -90,9 +124,67 @@ services:
 
     gpus: all
 
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=5)"
+        ]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+      start_period: 20s
+
+    restart: unless-stopped
+
+    profiles:
+      - ai
+
+
+  worker:
+    image: corporate-avatar-service-api:latest
+    container_name: avatar_worker
+
+    env_file:
+      - .env
+
+    command:
+      [
+        "celery",
+        "-A",
+        "app.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=avatar_jobs",
+        "--pool=prefork",
+        "--concurrency=1",
+        "--prefetch-multiplier=1",
+        "--max-tasks-per-child=1"
+      ]
+
+    volumes:
+      - ./app/storage:/app/storage
+      - ./models/rembg:/app/models/rembg
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      ai_inpaint:
+        condition: service_healthy
+
+    restart: unless-stopped
+    stop_grace_period: 30s
+
     profiles:
       - ai
 
 
 volumes:
   avatar_pg_data:
+  avatar_redis_data:

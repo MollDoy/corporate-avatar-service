@@ -127,7 +127,6 @@ onec_config/
 Dockerfile             основной API-контейнер
 Dockerfile.ai          AI-контейнер
 docker-compose.yml     запуск API + PostgreSQL + AI profile
-docker-compose.ai.yml  отдельный запуск AI-сервиса для экспериментов
 requirements.txt       зависимости основного API
 requirements-ai.txt    зависимости AI-сервиса
 .env.example           пример переменных окружения

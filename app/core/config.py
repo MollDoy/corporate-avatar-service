@@ -6,6 +6,10 @@ class Settings(BaseSettings):
     app_env: str = "dev"
     api_key: str = "change_me"
 
+    celery_broker_url: str = "redis://redis:6379/0"
+    celery_queue_name: str = "avatar_jobs"
+    celery_visibility_timeout: int = 3600
+
     database_url: str
 
     storage_dir: str = "/app/storage"
@@ -13,6 +17,10 @@ class Settings(BaseSettings):
 
     u2net_home: str = "/app/models/rembg"
     rembg_model_name: str = "birefnet-portrait"
+    rembg_max_input_size: int = 1280
+    rembg_alpha_matting: bool = False
+    rembg_omp_num_threads: int = 2
+
     avatar_output_size: int = 512
     mask_feather_radius: float = 0.8
 

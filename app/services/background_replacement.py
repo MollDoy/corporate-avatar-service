@@ -1,3 +1,4 @@
+import ctypes
 import gc
 import os
 from pathlib import Path
@@ -19,6 +20,8 @@ def _configure_rembg_model_dir() -> None:
     We set it explicitly so downloaded models are stored in /app/models/rembg.
     """
     os.environ["U2NET_HOME"] = settings.u2net_home
+    os.environ["OMP_NUM_THREADS"] = str(settings.rembg_omp_num_threads)
+
     Path(settings.u2net_home).mkdir(parents=True, exist_ok=True)
 
 
@@ -40,13 +43,18 @@ def _get_rembg_session() -> Any:
 
 def clear_rembg_sessions() -> None:
     """
-    Releases cached rembg sessions from API process memory.
-
-    This is important before running the heavy AI inpainting service:
-    birefnet-portrait can consume a lot of RAM, and DreamShaper also needs memory.
+    Удаляет ссылки на ONNX-сессии и пытается вернуть освобождённую
+    память процессу операционной системы.
     """
     _sessions.clear()
     gc.collect()
+
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except (OSError, AttributeError):
+        # Оптимизация предназначена для Linux/glibc.
+        pass
 
 def _create_gradient_background(
     width: int,
@@ -167,6 +175,31 @@ def _fit_foreground_to_avatar_canvas(
 
     return canvas
 
+def _resize_for_rembg(
+    image: Image.Image,
+) -> Image.Image:
+    max_size = settings.rembg_max_input_size
+
+    if max_size <= 0:
+        return image.copy()
+
+    width, height = image.size
+    longest_side = max(width, height)
+
+    if longest_side <= max_size:
+        return image.copy()
+
+    scale = max_size / longest_side
+
+    resized_size = (
+        max(1, round(width * scale)),
+        max(1, round(height * scale)),
+    )
+
+    return image.resize(
+        resized_size,
+        Image.Resampling.LANCZOS,
+    )
 
 def generate_basic_corporate_avatar(
     job_id: str,
@@ -174,51 +207,110 @@ def generate_basic_corporate_avatar(
     style_id: str = "default_business",
 ) -> str:
     """
-    Current MVP:
-    - takes source image without unsafe square crop
-    - removes background
-    - trims transparent edges with padding
-    - fits the full person into 512x512 avatar canvas
-    - places person on selected corporate gradient
-    - saves result.png
+    Удаляет фон на уменьшенной рабочей копии изображения,
+    помещает человека на корпоративный фон и сохраняет результат 512x512.
     """
     from rembg import remove
 
     output_size = settings.avatar_output_size
     style = get_avatar_style(style_id)
 
-    source = Image.open(source_image_path).convert("RGB")
+    with Image.open(source_image_path) as opened_source:
+        source = opened_source.convert("RGB")
+
+    working_source = _resize_for_rembg(source)
+    source.close()
 
     session = _get_rembg_session()
 
-    foreground = remove(
-        source,
-        session=session,
-        alpha_matting=True,
-        alpha_matting_foreground_threshold=240,
-        alpha_matting_background_threshold=10,
-        alpha_matting_erode_size=3,
-    ).convert("RGBA")
+    foreground: Image.Image | None = None
+    foreground_canvas: Image.Image | None = None
+    person_mask: Image.Image | None = None
+    background: Image.Image | None = None
+    result: Image.Image | None = None
+    segmentation_mask: Image.Image | None = None
 
-    foreground = _feather_alpha(foreground)
-    foreground = _trim_transparent_edges(foreground)
-    foreground_canvas = _fit_foreground_to_avatar_canvas(
-        foreground=foreground,
-        output_size=output_size,
-    )
+    try:
+        if settings.rembg_alpha_matting:
+            foreground = remove(
+                working_source,
+                session=session,
+                alpha_matting=True,
+                alpha_matting_foreground_threshold=240,
+                alpha_matting_background_threshold=10,
+                alpha_matting_erode_size=3,
+            ).convert("RGBA")
+        else:
+            segmentation_mask = remove(
+                working_source,
+                session=session,
+                only_mask=True,
+            ).convert("L")
 
-    person_mask = foreground_canvas.getchannel("A")
-    save_job_image(job_id, person_mask, "person_mask.png")
+            foreground = working_source.convert("RGBA")
+            foreground.putalpha(segmentation_mask)
 
-    background = _create_gradient_background(
-        width=output_size,
-        height=output_size,
-        top_color=style.top_color,
-        bottom_color=style.bottom_color,
-    ).convert("RGBA")
+        working_source.close()
+        working_source = None
 
-    background.alpha_composite(foreground_canvas)
+        if segmentation_mask is not None:
+            segmentation_mask.close()
+            segmentation_mask = None
 
-    result = background.convert("RGB")
+        smoothed_foreground = _feather_alpha(foreground)
 
-    return save_result_image(job_id, result)
+        if smoothed_foreground is not foreground:
+            foreground.close()
+
+        foreground = smoothed_foreground
+
+        trimmed_foreground = _trim_transparent_edges(foreground)
+
+        if trimmed_foreground is not foreground:
+            foreground.close()
+
+        foreground = trimmed_foreground
+
+        foreground_canvas = _fit_foreground_to_avatar_canvas(
+            foreground=foreground,
+            output_size=output_size,
+        )
+
+        if foreground_canvas is not foreground:
+            foreground.close()
+            foreground = None
+
+        person_mask = foreground_canvas.getchannel("A")
+        save_job_image(job_id, person_mask, "person_mask.png")
+
+        background = _create_gradient_background(
+            width=output_size,
+            height=output_size,
+            top_color=style.top_color,
+            bottom_color=style.bottom_color,
+        ).convert("RGBA")
+
+        background.alpha_composite(foreground_canvas)
+
+        result = background.convert("RGB")
+
+        return save_result_image(job_id, result)
+
+    finally:
+        images = (
+            source,
+            working_source,
+            segmentation_mask,
+            foreground,
+            foreground_canvas,
+            person_mask,
+            background,
+            result,
+        )
+
+        for image in images:
+            if image is not None:
+                try:
+                    image.close()
+                except Exception:
+                    pass
