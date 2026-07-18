@@ -1,22 +1,75 @@
 FROM python:3.11-slim
 
-WORKDIR /workspace
+WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PYTHONPATH=/app:/opt/ConsistentID
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git \
+        build-essential \
+        gcc \
+        g++ \
+        python3-dev \
         libgomp1 \
         libglib2.0-0 \
+        libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements-ai.txt .
+COPY requirements-ai.txt /app/requirements-ai.txt
 
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements-ai.txt
+RUN python -m pip install \
+        --no-cache-dir \
+        --upgrade \
+        pip \
+        setuptools \
+        wheel \
+        Cython \
+    && python -m pip install \
+        --no-cache-dir \
+        --prefer-binary \
+        -r /app/requirements-ai.txt \
+    && python -m pip check
 
-COPY scripts ./scripts
+ARG CONSISTENTID_GIT_REF=e234008e96bbfeef31b327b45f5600347a472738
 
-CMD ["uvicorn", "scripts.ai_service:app", "--host", "0.0.0.0", "--port", "8010"]
+RUN git init /opt/ConsistentID \
+    && cd /opt/ConsistentID \
+    && git remote add origin \
+        https://github.com/JackAILab/ConsistentID.git \
+    && git fetch --depth 1 origin "${CONSISTENTID_GIT_REF}" \
+    && git checkout --detach FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "${CONSISTENTID_GIT_REF}" \
+    && test -f /opt/ConsistentID/pipline_StableDiffusion_ConsistentID.py \
+    && test -f /opt/ConsistentID/attention.py \
+    && test -f /opt/ConsistentID/functions.py \
+    && test -f /opt/ConsistentID/models/BiSeNet/model.py
+
+COPY scripts/patch_consistentid.py /app/scripts/patch_consistentid.py
+
+RUN python /app/scripts/patch_consistentid.py \
+        /opt/ConsistentID/pipline_StableDiffusion_ConsistentID.py \
+    && rm -rf /opt/ConsistentID/.git \
+    && rm -rf \
+        /opt/ConsistentID/data \
+        /opt/ConsistentID/demo \
+        /opt/ConsistentID/evaluation \
+        /opt/ConsistentID/examples \
+        /opt/ConsistentID/pipelines \
+    && python -m py_compile \
+        /opt/ConsistentID/pipline_StableDiffusion_ConsistentID.py \
+        /opt/ConsistentID/attention.py \
+        /opt/ConsistentID/functions.py \
+        /opt/ConsistentID/models/BiSeNet/model.py
+
+COPY alembic.ini /app/alembic.ini
+COPY alembic /app/alembic
+COPY app /app/app
+COPY scripts /app/scripts
+
+RUN python -m compileall -q /app/app /app/scripts
+
+CMD ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=INFO", "--queues=avatar_jobs", "--pool=prefork", "--concurrency=1", "--prefetch-multiplier=1", "--max-tasks-per-child=1"]

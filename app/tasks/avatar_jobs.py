@@ -3,6 +3,9 @@ from app.db.session import SessionLocal
 from app.services.avatar_job_processor import (
     process_avatar_job as process_job,
 )
+from app.services.runtime_cleanup import (
+    release_worker_runtime_memory,
+)
 
 
 @celery_app.task(
@@ -14,6 +17,12 @@ def process_avatar_job(job_id: str) -> None:
     db = SessionLocal()
 
     try:
-        process_job(job_id=job_id, db=db)
+        process_job(
+            job_id=job_id,
+            db=db,
+        )
     finally:
         db.close()
+        release_worker_runtime_memory(
+            stage="celery_task_finally"
+        )

@@ -8,40 +8,78 @@ class Settings(BaseSettings):
 
     celery_broker_url: str = "redis://redis:6379/0"
     celery_queue_name: str = "avatar_jobs"
-    celery_visibility_timeout: int = 3600
+    celery_visibility_timeout: int = 7200
 
     database_url: str
 
     storage_dir: str = "/app/storage"
     max_image_mb: int = 10
+    normalized_image_max_side: int = 2048
 
-    u2net_home: str = "/app/models/rembg"
-    rembg_model_name: str = "birefnet-portrait"
-    rembg_max_input_size: int = 1280
-    rembg_alpha_matting: bool = False
-    rembg_omp_num_threads: int = 2
+    insightface_root: str = "/models/insightface"
+    insightface_model_name: str = "antelopev2"
+    insightface_swap_model_name: str = "buffalo_l"
+    inswapper_model_name: str = "inswapper_128.onnx"
 
-    avatar_output_size: int = 512
-    mask_feather_radius: float = 0.8
+    face_detection_width: int = 640
+    face_detection_height: int = 640
+    face_detection_threshold: float = 0.35
+    face_min_area_ratio: float = 0.008
 
-    face_min_size_ratio: float = 0.12
-    face_detection_scale_factor: float = 1.1
-    face_detection_min_neighbors: int = 5
+    secondary_face_min_score: float = 0.65
+    secondary_face_min_area_ratio: float = 0.25
 
-    face_similarity_threshold: float = 0.45
-    face_similarity_crop_size: int = 160
+    face_swap_enabled: bool = True
+    face_swap_pixel_boost_size: int = 512
+    face_swap_mask_blur_ratio: float = 0.025
+    face_swap_mask_dilation_ratio: float = 0.015
+    face_swap_color_match_strength: float = 0.45
+    face_swap_min_sharpness_ratio: float = 0.72
+    face_swap_min_identity_gain: float = 0.015
+    face_swap_max_identity_drop: float = 0.020
+    face_swap_top_k: int = 2
 
-    ai_model_id: str = "Lykon/dreamshaper-8-inpainting"
-    ai_service_url: str = "http://ai_inpaint:8010"
-    ai_device: str = "cuda"
-    ai_dtype: str = "float32"
-    ai_low_vram: bool = True
-    ai_output_name: str = "ai_result.png"
-    ai_inpaint_timeout_seconds: int = 900
-    ai_default_steps: int = 16
-    ai_default_guidance_scale: float = 8.0
-    ai_default_strength: float = 0.85
-    ai_restore_face_after_inpaint: bool = True
+    face_identity_antelope_threshold: float = 0.60
+    face_identity_buffalo_threshold: float = 0.58
+    face_identity_mean_threshold: float = 0.61
+    identity_quality_tie_margin: float = 0.012
+
+    keep_candidate_files: bool = True
+
+    ai_batch_script_path: str = "/app/scripts/ai_service.py"
+    ai_timeout_seconds: int = 7200
+    ai_candidate_seeds: str = "44,144,244"
+    ai_num_inference_steps: int = 50
+    ai_guidance_scale: float = 5.0
+    ai_output_size: int = 512
+    ai_cpu_threads: int = 8
+    ai_consistentid_adapter_scale: float = 1.00
+    ai_consistentid_start_merge_step: int = 30
+
+    ai_controlnet_enabled: bool = True
+    ai_controlnet_model_dir: str = "/models/controlnet_openpose"
+    ai_controlnet_conditioning_scale: float = 0.35
+    ai_controlnet_guidance_start: float = 0.0
+    ai_controlnet_guidance_end: float = 0.62
+
+    background_matting_enabled: bool = True
+    background_matting_required: bool = True
+    background_matting_script_path: str = (
+        "/app/scripts/background_matting.py"
+    )
+    background_matting_timeout_seconds: int = 1800
+    background_matting_model: str = "birefnet-portrait"
+    background_matting_threads: int = 6
+    background_matting_model_dir: str = "/models/rembg"
+    corporate_background_hex: str = "D5E0E8"
+    background_matting_alpha_gamma: float = 1.0
+    background_matting_min_foreground_ratio: float = 0.10
+    background_matting_max_foreground_ratio: float = 0.98
+    keep_background_mask: bool = False
+
+    pipeline_version: str = (
+        "sd15-consistentid-v1-sequential-originalref-birefnet-v15"
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

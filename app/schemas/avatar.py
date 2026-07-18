@@ -11,22 +11,28 @@ class AvatarJobCreateRequest(BaseModel):
     )
 
     style_id: str = Field(
-        default="default_business",
+        default="ai_business",
         min_length=1,
         max_length=100,
-        examples=["default_business"],
+        examples=["ai_business"],
     )
 
     image_base64: str = Field(
         min_length=1,
-        description="Source employee portrait encoded as base64 string",
+        description=(
+            "Source employee portrait "
+            "encoded as base64 string"
+        ),
     )
 
 
 class AvatarJobCreateResponse(BaseModel):
     job_id: str
     status: str
-    face_similarity_score: float | None = None
+
+    face_similarity_score: (
+        float | None
+    ) = None
 
 
 class AvatarJobStatusResponse(BaseModel):
@@ -34,10 +40,33 @@ class AvatarJobStatusResponse(BaseModel):
     employee_id: str
     style_id: str
     status: str
+
     source_image_path: str | None
     result_image_path: str | None
     error_message: str | None
-    face_similarity_score: float | None
+
+    face_similarity_score: (
+        float | None
+    )
+
+    source_face_detection_score: (
+        float | None
+    )
+
+    source_face_area_ratio: (
+        float | None
+    )
+
+    identity_similarity: (
+        float | None
+    )
+
+    generation_attempts: int
+    generation_seed: int | None
+
+    pipeline_version: str | None
+    warnings_json: str | None
+
     created_at: datetime
     updated_at: datetime
 
@@ -46,6 +75,7 @@ class AvatarJobResultResponse(BaseModel):
     job_id: str
     image_base64: str
     mime_type: str = "image/png"
+
 
 class AvatarStyleResponse(BaseModel):
     style_id: str

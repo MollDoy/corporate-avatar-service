@@ -44,7 +44,12 @@ services:
       - avatar_redis_data:/data
 
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -52,8 +57,77 @@ services:
     restart: unless-stopped
 
 
+  models-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.models
+
+    image: corporate-avatar-models-init:latest
+    container_name: avatar_models_init
+
+    env_file:
+      - .env
+
+    environment:
+      MODELS_ROOT: /models
+      INSIGHTFACE_ROOT: /models/insightface
+
+      AI_BASE_MODEL_DIR: /models/base_model
+      AI_VAE_MODEL_DIR: /models/vae
+      AI_CLIP_MODEL_DIR: /models/clip_vision
+      CONSISTENTID_MODEL_DIR: /models/consistentid
+      AI_CONTROLNET_MODEL_DIR: /models/controlnet_openpose
+      REMBG_MODEL_DIR: /models/rembg
+
+      ANTELOPEV2_URL: >-
+        https://github.com/deepinsight/insightface/releases/download/v0.7/antelopev2.zip
+
+      BUFFALO_L_URL: >-
+        https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
+
+    volumes:
+      - ./models:/models
+
+    restart: "no"
+
+    profiles:
+      - ai
+
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: corporate-avatar-service-api:latest
+    container_name: avatar_migrate
+
+    env_file:
+      - .env
+
+    command:
+      [
+        "alembic",
+        "upgrade",
+        "head"
+      ]
+
+    volumes:
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini:ro
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    restart: "no"
+
+
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+
     image: corporate-avatar-service-api:latest
     container_name: avatar_api
 
@@ -69,82 +143,22 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
       redis:
         condition: service_healthy
+
       migrate:
         condition: service_completed_successfully
 
     restart: unless-stopped
 
 
-  migrate:
-    image: corporate-avatar-service-api:latest
-    container_name: avatar_migrate
-
-    env_file:
-      - .env
-
-    command:
-      [
-        "alembic",
-        "upgrade",
-        "head"
-      ]
-
-    depends_on:
-      db:
-        condition: service_healthy
-
-    volumes:
-      - ./alembic:/app/alembic
-      - ./alembic.ini:/app/alembic.ini:ro
-
-    restart: "no"
-
-
-  ai_inpaint:
+  worker:
     build:
       context: .
       dockerfile: Dockerfile.ai
 
-    image: corporate-avatar-service-ai-inpaint:latest
-    container_name: avatar_ai_inpaint
-
-    env_file:
-      - .env
-
-    environment:
-      HF_HOME: /models/huggingface
-      HUGGINGFACE_HUB_CACHE: /models/huggingface/hub
-      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-
-    volumes:
-      - ./app/storage:/app/storage
-      - ./models/huggingface:/models/huggingface
-
-    gpus: all
-
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=5)"
-        ]
-      interval: 10s
-      timeout: 6s
-      retries: 12
-      start_period: 20s
-
-    restart: unless-stopped
-
-    profiles:
-      - ai
-
-
-  worker:
-    image: corporate-avatar-service-api:latest
+    image: corporate-avatar-service-ai-worker:latest
     container_name: avatar_worker
 
     env_file:
@@ -164,22 +178,70 @@ services:
         "--max-tasks-per-child=1"
       ]
 
+    environment:
+      STORAGE_DIR: /app/storage
+      STORAGE_ROOT: /app/storage/jobs
+
+      MODELS_ROOT: /models
+      INSIGHTFACE_ROOT: /models/insightface
+
+      AI_BASE_MODEL_DIR: /models/base_model
+      AI_VAE_MODEL_DIR: /models/vae
+      AI_CLIP_MODEL_DIR: /models/clip_vision
+      CONSISTENTID_MODEL_DIR: /models/consistentid
+      AI_CONTROLNET_MODEL_DIR: /models/controlnet_openpose
+      REMBG_MODEL_DIR: /models/rembg
+      U2NET_HOME: /models/rembg
+
+      AI_BATCH_SCRIPT_PATH: /app/scripts/ai_service.py
+      BACKGROUND_MATTING_SCRIPT_PATH: >-
+        /app/scripts/background_matting.py
+
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      DIFFUSERS_OFFLINE: "1"
+
+      OMP_NUM_THREADS: ${BACKGROUND_MATTING_THREADS}
+      MALLOC_TRIM_THRESHOLD_: "65536"
+
+      PYTORCH_CUDA_ALLOC_CONF: >-
+        expandable_segments:True
+
+      CUDA_MODULE_LOADING: "LAZY"
+
     volumes:
-      - ./app/storage:/app/storage
-      - ./models/rembg:/app/models/rembg
+      - type: bind
+        source: ./app/storage
+        target: /app/storage
+        read_only: false
+
+      - type: bind
+        source: ./models
+        target: /models
+        read_only: false
 
     depends_on:
       db:
         condition: service_healthy
+
       redis:
         condition: service_healthy
+
       migrate:
         condition: service_completed_successfully
-      ai_inpaint:
-        condition: service_healthy
+
+      models-init:
+        condition: service_completed_successfully
+
+    gpus: all
+    shm_size: "1gb"
+
+    mem_limit: 14g
+    memswap_limit: 18g
+    cpus: 8.0
 
     restart: unless-stopped
-    stop_grace_period: 30s
+    stop_grace_period: 60s
 
     profiles:
       - ai

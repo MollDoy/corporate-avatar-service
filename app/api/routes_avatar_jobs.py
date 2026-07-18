@@ -8,25 +8,35 @@ from sqlalchemy.orm import Session
 
 from app.core.security import verify_api_key
 from app.db.dependencies import get_db
-from app.db.models import AvatarJob, AvatarJobStatus
+from app.db.models import (
+    AvatarJob,
+    AvatarJobStatus,
+)
 from app.schemas.avatar import (
     AvatarJobCreateRequest,
     AvatarJobCreateResponse,
     AvatarJobResultResponse,
     AvatarJobStatusResponse,
 )
+from app.services.avatar_styles import (
+    get_avatar_style,
+)
 from app.services.image_storage import (
     decode_image_from_base64,
     encode_file_to_base64,
     save_source_image,
 )
-from app.tasks.avatar_jobs import process_avatar_job
+from app.tasks.avatar_jobs import (
+    process_avatar_job,
+)
 
 
 router = APIRouter(
     prefix="/api/v1/avatar-jobs",
     tags=["avatar-jobs"],
-    dependencies=[Depends(verify_api_key)],
+    dependencies=[
+        Depends(verify_api_key)
+    ],
 )
 
 
@@ -38,12 +48,52 @@ def _serialize_job(
         employee_id=job.employee_id,
         style_id=job.style_id,
         status=job.status.value,
-        source_image_path=job.source_image_path,
-        result_image_path=job.result_image_path,
-        error_message=job.error_message,
+
+        source_image_path=(
+            job.source_image_path
+        ),
+
+        result_image_path=(
+            job.result_image_path
+        ),
+
+        error_message=(
+            job.error_message
+        ),
+
         face_similarity_score=(
             job.face_similarity_score
         ),
+
+        source_face_detection_score=(
+            job
+            .source_face_detection_score
+        ),
+
+        source_face_area_ratio=(
+            job.source_face_area_ratio
+        ),
+
+        identity_similarity=(
+            job.identity_similarity
+        ),
+
+        generation_attempts=(
+            job.generation_attempts
+        ),
+
+        generation_seed=(
+            job.generation_seed
+        ),
+
+        pipeline_version=(
+            job.pipeline_version
+        ),
+
+        warnings_json=(
+            job.warnings_json
+        ),
+
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -51,13 +101,30 @@ def _serialize_job(
 
 @router.post(
     "",
-    response_model=AvatarJobCreateResponse,
-    status_code=status.HTTP_201_CREATED,
+    response_model=(
+        AvatarJobCreateResponse
+    ),
+    status_code=(
+        status.HTTP_201_CREATED
+    ),
 )
 def create_avatar_job(
     payload: AvatarJobCreateRequest,
     db: Session = Depends(get_db),
 ) -> AvatarJobCreateResponse:
+    try:
+        get_avatar_style(
+            payload.style_id
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_400_BAD_REQUEST
+            ),
+            detail=str(exc),
+        ) from exc
+
     image = decode_image_from_base64(
         payload.image_base64
     )
@@ -72,14 +139,21 @@ def create_avatar_job(
     db.refresh(job)
 
     try:
-        source_image_path = save_source_image(
-            job.id,
-            image,
+        source_image_path = (
+            save_source_image(
+                job.id,
+                image,
+            )
         )
+
     except Exception as exc:
-        job.status = AvatarJobStatus.failed
+        job.status = (
+            AvatarJobStatus.failed
+        )
+
         job.error_message = (
-            f"Could not save source image: {exc}"
+            "Could not save source image: "
+            f"{exc}"
         )
 
         db.add(job)
@@ -87,25 +161,36 @@ def create_avatar_job(
 
         raise HTTPException(
             status_code=(
-                status.HTTP_500_INTERNAL_SERVER_ERROR
+                status
+                .HTTP_500_INTERNAL_SERVER_ERROR
             ),
             detail=job.error_message,
         ) from exc
+
     finally:
         image.close()
 
-    job.source_image_path = source_image_path
+    job.source_image_path = (
+        source_image_path
+    )
 
     db.add(job)
     db.commit()
     db.refresh(job)
 
     try:
-        process_avatar_job.delay(job.id)
+        process_avatar_job.delay(
+            job.id
+        )
+
     except Exception as exc:
-        job.status = AvatarJobStatus.failed
+        job.status = (
+            AvatarJobStatus.failed
+        )
+
         job.error_message = (
-            f"Task queue is unavailable: {exc}"
+            "Task queue is unavailable: "
+            f"{exc}"
         )
 
         db.add(job)
@@ -113,7 +198,8 @@ def create_avatar_job(
 
         raise HTTPException(
             status_code=(
-                status.HTTP_503_SERVICE_UNAVAILABLE
+                status
+                .HTTP_503_SERVICE_UNAVAILABLE
             ),
             detail=job.error_message,
         ) from exc
@@ -121,6 +207,7 @@ def create_avatar_job(
     return AvatarJobCreateResponse(
         job_id=job.id,
         status=job.status.value,
+
         face_similarity_score=(
             job.face_similarity_score
         ),
@@ -129,17 +216,24 @@ def create_avatar_job(
 
 @router.get(
     "/{job_id}",
-    response_model=AvatarJobStatusResponse,
+    response_model=(
+        AvatarJobStatusResponse
+    ),
 )
 def get_avatar_job(
     job_id: str,
     db: Session = Depends(get_db),
 ) -> AvatarJobStatusResponse:
-    job = db.get(AvatarJob, job_id)
+    job = db.get(
+        AvatarJob,
+        job_id,
+    )
 
     if job is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
             detail="Avatar job not found",
         )
 
@@ -148,38 +242,59 @@ def get_avatar_job(
 
 @router.get(
     "/{job_id}/result",
-    response_model=AvatarJobResultResponse,
+    response_model=(
+        AvatarJobResultResponse
+    ),
 )
 def get_avatar_job_result(
     job_id: str,
     db: Session = Depends(get_db),
 ) -> AvatarJobResultResponse:
-    job = db.get(AvatarJob, job_id)
+    job = db.get(
+        AvatarJob,
+        job_id,
+    )
 
     if job is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
             detail="Avatar job not found",
         )
 
-    if job.status != AvatarJobStatus.done:
+    if (
+        job.status
+        != AvatarJobStatus.done
+    ):
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
             detail=(
                 "Avatar job is not done. "
-                f"Current status: {job.status.value}"
+                f"Current status: "
+                f"{job.status.value}"
             ),
         )
 
     if not job.result_image_path:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Result image path is empty",
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail=(
+                "Result image path "
+                "is empty"
+            ),
         )
 
     return AvatarJobResultResponse(
         job_id=job.id,
-        image_base64=encode_file_to_base64(
-            job.result_image_path
+
+        image_base64=(
+            encode_file_to_base64(
+                job.result_image_path
+            )
         ),
     )

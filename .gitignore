@@ -1,50 +1,41 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+*$py.class
 
 # Virtual environments
 .venv/
 venv/
 env/
+.venv-download/
 
-# Environment
+# Environment files
 .env
 
 # IDE
 .vscode/
 .idea/
 
+# Logs
+*.log
+build.log
+
+# Runtime storage
+app/storage/jobs/*
+!app/storage/jobs/.gitkeep
+
+# Downloaded model weights
+models/huggingface/*
+models/ip_adapter_faceid/*
+models/insightface/*
+
+!models/huggingface/.gitkeep
+!models/ip_adapter_faceid/.gitkeep
+!models/insightface/.gitkeep
+
+models/*
+!models/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db
-
-# Storage
-app/storage/*
-!app/storage/.gitkeep
-!app/storage/jobs/.gitkeep
-
-# Logs
-*.log
-
-# Models and generated files
-models/*
-!models/.gitkeep
-outputs/*
-*.log
-*.onnx
-*.ckpt
-*.safetensors
-*.pt
-*.pth
-
-# Local reference images
-references/*
-!references/.gitkeep
-
-# Windows / WSL metadata
-*Zone.Identifier
