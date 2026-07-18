@@ -29,10 +29,7 @@ class AvatarJobCreateRequest(BaseModel):
 class AvatarJobCreateResponse(BaseModel):
     job_id: str
     status: str
-
-    face_similarity_score: (
-        float | None
-    ) = None
+    face_similarity_score: float | None = None
 
 
 class AvatarJobStatusResponse(BaseModel):
@@ -45,21 +42,10 @@ class AvatarJobStatusResponse(BaseModel):
     result_image_path: str | None
     error_message: str | None
 
-    face_similarity_score: (
-        float | None
-    )
-
-    source_face_detection_score: (
-        float | None
-    )
-
-    source_face_area_ratio: (
-        float | None
-    )
-
-    identity_similarity: (
-        float | None
-    )
+    face_similarity_score: float | None
+    source_face_detection_score: float | None
+    source_face_area_ratio: float | None
+    identity_similarity: float | None
 
     generation_attempts: int
     generation_seed: int | None
@@ -75,6 +61,25 @@ class AvatarJobResultResponse(BaseModel):
     job_id: str
     image_base64: str
     mime_type: str = "image/png"
+
+
+class AvatarArtifactResponse(BaseModel):
+    artifact_id: str
+    artifact_type: str
+    file_name: str
+    seed: int | None
+    attempt_number: int | None
+    content_type: str
+    size_bytes: int
+    sha256: str
+    object_key: str | None
+    download_url: str | None
+
+
+class AvatarJobArtifactsResponse(BaseModel):
+    job_id: str
+    storage_backend: str
+    artifacts: list[AvatarArtifactResponse]
 
 
 class AvatarStyleResponse(BaseModel):

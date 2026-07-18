@@ -16,6 +16,27 @@ class Settings(BaseSettings):
     max_image_mb: int = 10
     normalized_image_max_side: int = 2048
 
+    object_storage_backend: str = "local"
+
+    s3_endpoint_url: str = ""
+    s3_public_endpoint_url: str = ""
+    s3_region_name: str = "us-east-1"
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    s3_session_token: str = ""
+    s3_bucket_name: str = ""
+    s3_key_prefix: str = "corporate-avatar-service"
+    s3_addressing_style: str = "path"
+    s3_signature_version: str = "s3v4"
+    s3_verify_ssl: bool = True
+    s3_server_side_encryption: str = ""
+    s3_connect_timeout_seconds: int = 10
+    s3_read_timeout_seconds: int = 60
+    s3_max_attempts: int = 4
+    s3_presigned_url_ttl_seconds: int = 900
+    s3_publish_max_retries: int = 5
+    s3_publish_retry_delay_seconds: int = 30
+
     insightface_root: str = "/models/insightface"
     insightface_model_name: str = "antelopev2"
     insightface_swap_model_name: str = "buffalo_l"
@@ -78,7 +99,7 @@ class Settings(BaseSettings):
     keep_background_mask: bool = False
 
     pipeline_version: str = (
-        "sd15-consistentid-v1-sequential-originalref-birefnet-v15"
+        "sd15-consistentid-v1-sequential-originalref-birefnet-v17"
     )
 
     model_config = SettingsConfigDict(

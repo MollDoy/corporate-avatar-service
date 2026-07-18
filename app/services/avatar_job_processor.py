@@ -28,6 +28,8 @@ from app.services.face_conditioning import (
 )
 from app.services.face_swap import swap_faces_in_candidates
 from app.services.image_normalization import normalize_source_image
+from app.services.job_artifacts import publish_job_image_artifacts
+from app.services.object_storage import ObjectStorageError
 from app.services.portrait_generation_client import (
     GeneratedCandidate,
     generate_portrait_candidates,
@@ -746,6 +748,13 @@ def process_avatar_job(
             ensure_ascii=False,
         )
 
+        # Persist all business image artifacts before the job is marked done.
+        # This changes only storage orchestration; model execution is untouched.
+        publish_job_image_artifacts(
+            db=db,
+            job_id=job.id,
+        )
+
         job.status = (
             AvatarJobStatus.done
         )
@@ -759,6 +768,10 @@ def process_avatar_job(
             generated_candidates
             + swapped_candidates
         )
+
+    except ObjectStorageError:
+        db.rollback()
+        raise
 
     except Exception as exc:
         db.rollback()
