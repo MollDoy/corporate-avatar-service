@@ -62,7 +62,7 @@ PostgreSQL: статус, метрики и метаданные артефак�
 4. Из исходника создаётся face-centric reference для ConsistentID.
 5. ConsistentID выполняет identity-preserving генерацию на базе Realistic Vision V6.
 6. ControlNet v1.1 OpenPose задаёт центрированную верхнюю позу сотрудника.
-7. Сиды проверяются последовательно: `44 → 144 → 244`. Следующий сид запускается только при отклонении предыдущего результата.
+7. Сиды проверяются последовательно: `44 - 144 - 244`. Следующий сид запускается только при отклонении предыдущего результата.
 8. Каждый кандидат проверяется двумя независимыми InsightFace-моделями.
 9. InSwapper применяется к подходящим кандидатам; ухудшающие swap-варианты отбрасываются.
 10. BiRefNet Portrait отделяет человека от фона и заменяет фон на `#D5E0E8`.
@@ -70,15 +70,15 @@ PostgreSQL: статус, метрики и метаданные артефак�
 
 ## Используемые модели
 
-- `SG161222/Realistic_Vision_V6.0_B1_noVAE` — базовая Stable Diffusion 1.5 модель;
-- `stabilityai/sd-vae-ft-mse` — VAE;
-- `JackAILab/ConsistentID`, `ConsistentID-v1.bin` — сохранение личности;
-- `laion/CLIP-ViT-H-14-laion2B-s32B-b79K` — визуальное кодирование;
-- `lllyasviel/control_v11p_sd15_openpose` — контроль позы и композиции;
-- InsightFace `antelopev2` — детекция, landmarks и проверка сходства;
-- InsightFace `buffalo_l` — независимый face embedding;
-- `inswapper_128.onnx` — дополнительное восстановление личности;
-- `BiRefNet-portrait` — выделение человека и замена фона.
+- `SG161222/Realistic_Vision_V6.0_B1_noVAE` - базовая Stable Diffusion 1.5 модель;
+- `stabilityai/sd-vae-ft-mse` - VAE;
+- `JackAILab/ConsistentID`, `ConsistentID-v1.bin` - сохранение личности;
+- `laion/CLIP-ViT-H-14-laion2B-s32B-b79K` - визуальное кодирование;
+- `lllyasviel/control_v11p_sd15_openpose` - контроль позы и композиции;
+- InsightFace `antelopev2` - детекция, landmarks и проверка сходства;
+- InsightFace `buffalo_l` - независимый face embedding;
+- `inswapper_128.onnx` - дополнительное восстановление личности;
+- `BiRefNet-portrait` - выделение человека и замена фона.
 
 Модели загружаются контейнером `models-init` в локальный каталог `models/` и затем используются worker в offline-режиме.
 
@@ -155,7 +155,9 @@ docker-compose.yml       инфраструктура проекта
 - свободное место для моделей и Docker volumes;
 - доступ в интернет при первой загрузке моделей.
 
-Текущая конфигурация выполняет генерацию в FP32 с последовательной загрузкой компонентов и рассчитана на один GPU-worker. Тестирование проекта проводилось на машине с GTX 1660 + Intel Xeon E5-2689
+Текущая конфигурация выполняет генерацию в FP32 с последовательной загрузкой компонентов и рассчитана на один GPU-worker. 
+
+Тестирование проекта проводилось на машине с GTX 1660 + Intel Xeon E5-2689 + 32 GB RAM DDR3
 
 ## Настройка
 
